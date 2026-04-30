@@ -60,17 +60,16 @@ fn main() -> anyhow::Result<()> {
             last_save = Instant::now();
 
             // 2. 保存済みフレームに対してパーティ判定
-            match identifier.identify_party(&frame, &crop_config) {
+            match identifier.identify_party_batch(&frame, &crop_config) {
                 Ok(results) => {
-                    // キーをソートして出力を安定させる
                     let mut keys: Vec<_> = results.keys().collect();
                     keys.sort();
                     for key in keys {
                         let (name, score) = &results[key];
-                        println!("  [{key}] {name}  (similarity: {score:.4})");
+                        println!("  [{key}] {name} ({score:.4})");
                     }
                 }
-                Err(e) => eprintln!("  判定エラー: {e}"),
+                Err(e) => eprintln!("  Error: {e}"),
             }
         }
 
