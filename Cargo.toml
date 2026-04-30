@@ -1,0 +1,25 @@
+[package]
+name = "champions-agent"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "usage_fetcher"
+path = "src/lib.rs"
+
+[[bin]]
+name = "champions-agent"
+path = "src/main.rs"
+
+[dependencies]
+# --- usage fetcher (lib) ---
+reqwest  = { version = "0.12", features = ["blocking"] }
+serde    = { version = "1",    features = ["derive"] }
+serde_json = "1"
+regex    = "1"
+anyhow   = "1"
+indexmap = { version = "2", features = ["serde"] }
+opencv   = { version = "0.93", features = ["videoio", "highgui", "imgcodecs"] }
+ort = { version = "=2.0.0-rc.12", features = ["cuda"] }
+ndarray = "0.17"
+image = "0.24"
