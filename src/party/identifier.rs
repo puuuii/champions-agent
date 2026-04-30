@@ -1,11 +1,12 @@
+use rayon::prelude::*;
 use std::{
     collections::HashMap,
-    path::Path, // PathBuf を削除
+    path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result};
 use image::{DynamicImage, RgbImage, imageops};
-use ndarray::{Array1, Array3, Axis, s, stack}; // Array4 を削除
+use ndarray::{Array1, Array3, Axis, s, stack};
 use opencv::core::Mat;
 use ort::{
     execution_providers::{CPUExecutionProvider, CUDAExecutionProvider},
@@ -80,19 +81,14 @@ impl PartyIdentifier {
         let views: Vec<_> = batch_tensors.iter().map(|a| a.view()).collect();
         let batch_input = stack(Axis(0), &views)?;
 
-        // --- 修正ポイント：スコープを分けて借用を解除する ---
         let embeddings = {
             let input = Tensor::from_array(batch_input)?;
-            // ここで self を mutable に借用する
             let outputs = self.session.run(ort::inputs!["pixel_values" => input])?;
-            // データを所有権付きの ArrayD にコピーして取り出す
             outputs["embedding"].try_extract_array::<f32>()?.to_owned()
-            // ブロックを抜けることで outputs がドロップされ、self の借用が解除される
         };
 
         let mut results = HashMap::new();
         for (idx, key) in result_keys.into_iter().enumerate() {
-            // ここでは self はもう自由なので find_best_match を呼べる
             let emb = embeddings.slice(s![idx, ..]).to_owned();
             let (name, score) = self.find_best_match(&l2_normalize(emb));
             results.insert(key, (name, score));
@@ -103,17 +99,28 @@ impl PartyIdentifier {
 
     fn cache_master_data(&mut self, master_dir: impl AsRef<Path>) -> Result<()> {
         let master_dir = master_dir.as_ref();
-        let paths: Vec<_> = std::fs::read_dir(master_dir)?
+        let paths: Vec<PathBuf> = std::fs::read_dir(master_dir)?
             .filter_map(|e| e.ok())
             .map(|e| e.path())
             .filter(|p| p.extension().map_or(false, |ext| ext == "png"))
             .collect();
 
-        for path in paths {
-            let img = image::open(&path)?;
-            let tensor = preprocess_single(&img);
+        println!("{} 枚の画像を並列読み込み中...", paths.len());
 
-            // ここも同様に所有権を分離
+        let processed_data: Vec<(String, Array3<f32>)> = paths
+            .into_par_iter()
+            .map(|path: PathBuf| {
+                let img =
+                    image::open(&path).with_context(|| format!("Failed to open {:?}", path))?;
+
+                let tensor = preprocess_single(&img);
+                let name = path.file_stem().unwrap().to_string_lossy().to_string();
+
+                Ok((name, tensor))
+            })
+            .collect::<Result<Vec<(String, Array3<f32>)>>>()?;
+
+        for (name, tensor) in processed_data {
             let emb = {
                 let input = Tensor::from_array(tensor.insert_axis(Axis(0)))?;
                 let outputs = self.session.run(ort::inputs!["pixel_values" => input])?;
@@ -123,10 +130,11 @@ impl PartyIdentifier {
                     .to_owned()
             };
 
-            let name = path.file_stem().unwrap().to_string_lossy().to_string();
             self.master_embeddings.push(l2_normalize(emb));
             self.master_names.push(name);
         }
+
+        println!("キャッシュ完了: {} 体", self.master_names.len());
         Ok(())
     }
 
@@ -144,6 +152,7 @@ impl PartyIdentifier {
     }
 }
 
+// ヘルパー関数は impl の外で定義
 fn preprocess_single(img: &DynamicImage) -> Array3<f32> {
     let resized = img.resize_exact(INPUT_SIZE, INPUT_SIZE, imageops::FilterType::Triangle);
     let rgb = resized.to_rgb8();

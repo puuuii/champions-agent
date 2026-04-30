@@ -117,6 +117,7 @@ dependencies = [
  "ndarray",
  "opencv",
  "ort",
+ "rayon",
  "regex",
  "reqwest",
  "serde",
