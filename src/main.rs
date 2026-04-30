@@ -1,6 +1,8 @@
 use opencv::{core, highgui, imgcodecs, prelude::*, videoio};
 use std::{
     fs,
+    sync::mpsc,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -29,7 +31,36 @@ fn main() -> anyhow::Result<()> {
     let crop_config = default_crop_config();
     println!("[2/3] 完了");
 
-    // ─── Step 3: キャプチャパイプライン ──────────────────────────────────────
+    // ─── 推論・保存用ワーカースレッドの立ち上げ ──────────────────────────────
+    // キューのサイズを1にしておき、最新の1フレームだけを処理待ちにする
+    let (tx, rx) = mpsc::sync_channel::<core::Mat>(1);
+
+    thread::spawn(move || {
+        for frame in rx {
+            // 1. capture.png として保存
+            let params = core::Vector::new();
+            if let Err(e) = imgcodecs::imwrite(CAPTURE_PATH, &frame, &params) {
+                eprintln!("Image save error: {e}");
+            } else {
+                println!("Saved: {CAPTURE_PATH}");
+            }
+
+            // 2. 保存済みフレームに対してパーティ判定
+            match identifier.identify_party_batch(&frame, &crop_config) {
+                Ok(results) => {
+                    let mut keys: Vec<_> = results.keys().collect();
+                    keys.sort();
+                    for key in keys {
+                        let (name, score) = &results[key];
+                        println!("  [{key}] {name} ({score:.4})");
+                    }
+                }
+                Err(e) => eprintln!("  Inference Error: {e}"),
+            }
+        }
+    });
+
+    // ─── Step 3: キャプチャパイプライン (メインスレッド) ──────────────────────
     println!("[3/3] キャプチャを開始します。'q'キーで終了。");
 
     let mut cam = videoio::VideoCapture::new(0, videoio::CAP_V4L2)?;
@@ -53,28 +84,16 @@ fn main() -> anyhow::Result<()> {
         }
 
         if last_save.elapsed() >= interval {
-            // 1. capture.png として保存
-            let params = core::Vector::new();
-            imgcodecs::imwrite(CAPTURE_PATH, &frame, &params)?;
-            println!("Saved: {CAPTURE_PATH}");
-            last_save = Instant::now();
-
-            // 2. 保存済みフレームに対してパーティ判定
-            match identifier.identify_party_batch(&frame, &crop_config) {
-                Ok(results) => {
-                    let mut keys: Vec<_> = results.keys().collect();
-                    keys.sort();
-                    for key in keys {
-                        let (name, score) = &results[key];
-                        println!("  [{key}] {name} ({score:.4})");
-                    }
-                }
-                Err(e) => eprintln!("  Error: {e}"),
+            // フレームを複製してワーカースレッドに送る
+            // send() ではなく try_send() を使うことで、推論が間に合っていなくても
+            // メインスレッド（動画ストリーミング）をブロックせずに破棄する
+            if let Ok(cloned_frame) = frame.try_clone() {
+                let _ = tx.try_send(cloned_frame);
             }
+            last_save = Instant::now();
         }
 
         highgui::imshow("Switch 2 Rust Stream", &frame)?;
-        // 'q' as i32 のレガシーキャストを修正
         if highgui::wait_key(1)? == i32::from(b'q') {
             break;
         }
