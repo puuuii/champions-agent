@@ -102,7 +102,7 @@ impl PartyIdentifier {
         let paths: Vec<PathBuf> = std::fs::read_dir(master_dir)?
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| p.extension().map_or(false, |ext| ext == "png"))
+            .filter(|p| p.extension().is_some_and(|ext| ext == "png"))
             .collect();
 
         println!("{} 枚の画像を並列読み込み中...", paths.len());

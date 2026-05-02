@@ -15,7 +15,7 @@ fn get_rank_mult(stage: i8) -> (u32, u32) {
     if s >= 0 {
         (2 + s as u32, 2)
     } else {
-        (2, 2 + s.abs() as u32)
+        (2, 2 + s.unsigned_abs() as u32)
     }
 }
 
@@ -80,11 +80,10 @@ pub fn calculate_damage(master: &MasterData, args: &DamageArgs) -> Result<u32, S
     let mut damage = (((22 * power * final_a) / final_d) / 50 + 2) as f64;
 
     // タイプ一致補正 (STAB)[cite: 20, 26]
-    if let Some(atk_types) = master.pokemon_types.get(&args.attacker_id) {
-        if atk_types.contains(&m.type_id) {
+    if let Some(atk_types) = master.pokemon_types.get(&args.attacker_id)
+        && atk_types.contains(&m.type_id) {
             damage = (damage * 1.5).floor();
         }
-    }
 
     // 乱数・急所補正[cite: 18, 20, 26]
     damage = (damage * args.rng_roll).floor();
