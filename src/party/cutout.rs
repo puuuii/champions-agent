@@ -34,15 +34,6 @@ impl Default for SideCropConfig {
 pub fn default_crop_config() -> HashMap<&'static str, SideCropConfig> {
     let mut m = HashMap::new();
     m.insert(
-        "my",
-        SideCropConfig {
-            center_x: 0.286,
-            y_start: 0.197,
-            y_gap: 0.1165,
-            size_w: 0.057,
-        },
-    );
-    m.insert(
         "opp",
         SideCropConfig {
             center_x: 0.87,

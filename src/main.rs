@@ -11,6 +11,8 @@ use usage_fetcher::fetch_usage;
 mod party;
 use party::{PartyIdentifier, default_crop_config};
 
+pub mod damage;
+
 const USAGE_URL: &str = "https://gamewith.jp/pokemon-champions/555373";
 const USAGE_OUT: &str = "master_data/usage.json";
 const CAPTURE_PATH: &str = "capture.png";
