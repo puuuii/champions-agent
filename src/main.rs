@@ -1,105 +1,109 @@
+use iced::Size;
 use opencv::{core, highgui, imgcodecs, prelude::*, videoio};
 use std::{
-    fs,
+    fs, process,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
 
-use usage_fetcher::fetch_usage;
-
 mod party;
 use party::{PartyIdentifier, default_crop_config};
-
 pub mod damage;
 
-const USAGE_URL: &str = "https://gamewith.jp/pokemon-champions/555373";
-const USAGE_OUT: &str = "master_data/usage.json";
+pub mod ui;
+use ui::app::PokeEditorApp;
+
+// 警告を避けるため未使用定数に _ を付与
+const _USAGE_URL: &str = "https://gamewith.jp/pokemon-champions/555373";
+const _USAGE_OUT: &str = "master_data/usage.json";
 const CAPTURE_PATH: &str = "capture.png";
 const ONNX_PATH: &str = "models/dinov2_vits14.onnx";
 const MASTER_IMG_DIR: &str = "master_data/pokemon_images";
 
-fn main() -> anyhow::Result<()> {
-    // ─── Step 1: 使用率データの取得 ──────────────────────────────────────────
-    println!("[1/3] 使用率データを取得中: {USAGE_URL}");
-    let usage_data = fetch_usage(USAGE_URL)?;
-    fs::create_dir_all("master_data")?;
-    fs::write(USAGE_OUT, serde_json::to_string_pretty(&usage_data)?)?;
-    println!("[1/3] 完了: {}体分 → {USAGE_OUT}", usage_data.len());
-
-    // ─── Step 2: パーティ判定エンジンの初期化 ────────────────────────────────
-    println!("[2/3] パーティ判定エンジンを初期化中...");
-    let mut identifier = PartyIdentifier::new(ONNX_PATH, MASTER_IMG_DIR)?;
-    let crop_config = default_crop_config();
-    println!("[2/3] 完了");
-
-    // ─── 推論・保存用ワーカースレッドの立ち上げ ──────────────────────────────
-    // キューのサイズを1にしておき、最新の1フレームだけを処理待ちにする
+fn main() -> iced::Result {
+    let _ = fs::create_dir_all("master_data");
     let (tx, rx) = mpsc::sync_channel::<core::Mat>(1);
 
+    // ─── ワーカースレッド (推論処理) ───
     thread::spawn(move || {
-        for frame in rx {
-            // 1. capture.png として保存
-            let params = core::Vector::new();
-            if let Err(e) = imgcodecs::imwrite(CAPTURE_PATH, &frame, &params) {
-                eprintln!("Image save error: {e}");
-            } else {
-                println!("Saved: {CAPTURE_PATH}");
+        println!("[Worker] 推論エンジンを初期化中...");
+        let mut identifier = match PartyIdentifier::new(ONNX_PATH, MASTER_IMG_DIR) {
+            Ok(id) => {
+                println!("[Worker] 初期化完了。");
+                id
             }
+            Err(e) => {
+                eprintln!("[Worker] 初期化失敗: {e}");
+                return;
+            }
+        };
+        let crop_config = default_crop_config();
 
-            // 2. 保存済みフレームに対してパーティ判定
+        for frame in rx {
+            let _ = imgcodecs::imwrite(CAPTURE_PATH, &frame, &core::Vector::new());
+
             match identifier.identify_party_batch(&frame, &crop_config) {
                 Ok(results) => {
-                    let mut keys: Vec<_> = results.keys().collect();
-                    keys.sort();
-                    for key in keys {
-                        let (name, score) = &results[key];
-                        println!("  [{key}] {name} ({score:.4})");
+                    if !results.is_empty() {
+                        let mut keys: Vec<_> = results.keys().collect();
+                        keys.sort();
+                        println!("--- 推論結果 ---");
+                        for key in keys {
+                            let (name, score) = &results[key];
+                            println!("  [{key}] {name} ({score:.4})");
+                        }
                     }
                 }
-                Err(e) => eprintln!("  Inference Error: {e}"),
+                Err(e) => eprintln!("[Worker] 推論エラー: {e}"),
             }
         }
     });
 
-    // ─── Step 3: キャプチャパイプライン (メインスレッド) ──────────────────────
-    println!("[3/3] キャプチャを開始します。'q'キーで終了。");
+    // ─── サブスレッド (OpenCV映像キャプチャ) ───
+    thread::spawn(move || {
+        // warning回避のため cam_opt への mut は付与しない
+        let cam_opt = videoio::VideoCapture::new(0, videoio::CAP_V4L2).ok();
+        if let Some(mut cam) = cam_opt {
+            let _ = cam.set(videoio::CAP_PROP_FRAME_WIDTH, 1920.0);
+            let _ = cam.set(videoio::CAP_PROP_FRAME_HEIGHT, 1080.0);
+            let mut frame = core::Mat::default();
+            let mut last_save = Instant::now();
+            loop {
+                if cam.read(&mut frame).is_ok() && !frame.empty() {
+                    if last_save.elapsed() >= Duration::from_secs(1) {
+                        if let Ok(cloned) = frame.try_clone() {
+                            let _ = tx.try_send(cloned);
+                        }
+                        last_save = Instant::now();
+                    }
+                    let _ = highgui::imshow("Switch 2 Rust Stream", &frame);
 
-    let mut cam = videoio::VideoCapture::new(0, videoio::CAP_V4L2)?;
-    anyhow::ensure!(
-        videoio::VideoCapture::is_opened(&cam)?,
-        "キャプチャボードが開けません"
-    );
-
-    cam.set(videoio::CAP_PROP_FRAME_WIDTH, 1920.0)?;
-    cam.set(videoio::CAP_PROP_FRAME_HEIGHT, 1080.0)?;
-    cam.set(videoio::CAP_PROP_FPS, 60.0)?;
-
-    let mut frame = core::Mat::default();
-    let mut last_save = Instant::now();
-    let interval = Duration::from_secs(1);
-
-    loop {
-        cam.read(&mut frame)?;
-        if frame.empty() {
-            continue;
-        }
-
-        if last_save.elapsed() >= interval {
-            // フレームを複製してワーカースレッドに送る
-            // send() ではなく try_send() を使うことで、推論が間に合っていなくても
-            // メインスレッド（動画ストリーミング）をブロックせずに破棄する
-            if let Ok(cloned_frame) = frame.try_clone() {
-                let _ = tx.try_send(cloned_frame);
+                    // 'q' が押されたらプロセスごと終了させる
+                    if highgui::wait_key(1).unwrap_or(-1) == b'q' as i32 {
+                        println!("'q' が押されたため終了します...");
+                        process::exit(0);
+                    }
+                }
             }
-            last_save = Instant::now();
+        } else {
+            eprintln!("[Capture] カメラが見つかりません。");
         }
+    });
 
-        highgui::imshow("Switch 2 Rust Stream", &frame)?;
-        if highgui::wait_key(1)? == i32::from(b'q') {
-            break;
-        }
-    }
-
-    Ok(())
+    // ─── メインスレッド (iced v0.14) ───
+    iced::application(
+        PokeEditorApp::new,
+        PokeEditorApp::update,
+        PokeEditorApp::view,
+    )
+    .title("Pokemon Editor")
+    .window(iced::window::Settings {
+        size: Size {
+            width: 1200.0,
+            height: 800.0,
+        },
+        ..Default::default()
+    })
+    .run()
 }
