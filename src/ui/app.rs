@@ -1,10 +1,11 @@
 use super::pokemon::{PokemonState, PokemonView};
 use iced::{
-    Element, Length, Task,
+    Element, Length, Subscription, Task,
+    futures::SinkExt,
     widget::{button, column, container, row, scrollable, text},
 };
+use std::sync::{Arc, Mutex, mpsc};
 
-// 1. タブの種類を定義
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Editor,
@@ -12,23 +13,27 @@ pub enum Tab {
 }
 
 pub struct PokeEditorApp {
-    pokemons: [PokemonState; 6], // 6匹分の状態
-    active_tab: Tab,             // 現在表示中のタブ
+    pokemons: [PokemonState; 6],
+    active_tab: Tab,
+    ocr_result: Option<String>,
+    ocr_receiver: Arc<Mutex<mpsc::Receiver<String>>>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    PokemonMsg(usize, super::pokemon::Message), // ポケモン個別の更新メッセージ
-    TabSelected(Tab),                           // タブ切り替えメッセージ
+    PokemonMsg(usize, super::pokemon::Message),
+    TabSelected(Tab),
+    OcrResultReceived(String),
 }
 
 impl PokeEditorApp {
-    pub fn new() -> (Self, Task<Message>) {
+    pub fn new(ocr_receiver: Arc<Mutex<mpsc::Receiver<String>>>) -> (Self, Task<Message>) {
         (
             Self {
-                // 既存の初期化
                 pokemons: std::array::from_fn(|i| PokemonState::new(format!("poke{}", i + 1))),
-                active_tab: Tab::Editor, // 最初は編集画面
+                active_tab: Tab::Editor,
+                ocr_result: None,
+                ocr_receiver,
             },
             Task::none(),
         )
@@ -37,17 +42,46 @@ impl PokeEditorApp {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::PokemonMsg(index, msg) => {
-                self.pokemons[index].update(msg); // pokemon.rsのupdateを呼ぶ
+                self.pokemons[index].update(msg);
             }
             Message::TabSelected(tab) => {
-                self.active_tab = tab; // タブを切り替える
+                self.active_tab = tab;
+            }
+            Message::OcrResultReceived(text) => {
+                self.ocr_result = Some(text);
             }
         }
         Task::none()
     }
 
+    pub fn subscription(&self) -> Subscription<Message> {
+        // Use a static OnceLock to store the receiver so it can be accessed without capturing in the subscription closure.
+        static RECEIVER: std::sync::OnceLock<Arc<Mutex<mpsc::Receiver<String>>>> = std::sync::OnceLock::new();
+        let _ = RECEIVER.set(self.ocr_receiver.clone());
+
+        iced::Subscription::run(|| {
+            iced::stream::channel(100, |mut output: iced::futures::channel::mpsc::Sender<Message>| {
+                let receiver = RECEIVER.get().unwrap().clone();
+                async move {
+                    loop {
+                        let receiver = receiver.clone();
+                        let result = tokio::task::spawn_blocking(move || {
+                            receiver.lock().unwrap().recv().ok()
+                        })
+                        .await;
+
+                        if let Ok(Some(text)) = result {
+                            let _ = output.send(Message::OcrResultReceived(text)).await;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            })
+        })
+    }
+
     pub fn view(&self) -> Element<'_, Message> {
-        // タブ切り替え用のボタンバー
         let tab_bar = row![
             button(text("パーティ編集"))
                 .on_press(Message::TabSelected(Tab::Editor))
@@ -58,7 +92,6 @@ impl PokeEditorApp {
         ]
         .spacing(10);
 
-        // 現在のタブに応じてコンテンツを出し分け
         let content = match self.active_tab {
             Tab::Editor => self.editor_view(),
             Tab::SelectionSupport => self.selection_support_view(),
@@ -70,9 +103,6 @@ impl PokeEditorApp {
             .into()
     }
 
-    // --- 内部ヘルパー関数 ---
-
-    // 既存の6匹並べるビュー
     fn editor_view(&self) -> Element<'_, Message> {
         let grid = row![
             column![
@@ -93,11 +123,21 @@ impl PokeEditorApp {
         scrollable(column![text("Party Editor").size(32), grid].spacing(20)).into()
     }
 
-    // 新規追加する画面
     fn selection_support_view(&self) -> Element<'_, Message> {
-        container(text("選出サポート画面（実装待ち）").size(24))
-            .center_x(Length::Fill)
-            .center_y(Length::Fill)
+        let result_widget = match &self.ocr_result {
+            None => text("OCR結果待機中...").size(20),
+            Some(result) => {
+                let has_single = result.contains("シングル");
+                let has_battle = result.contains("バトル");
+                let label = if has_single && has_battle { "OK" } else { "NG" };
+                text(format!("{}: {}", label, result)).size(20)
+            }
+        };
+
+        container(column![text("選出サポート").size(32), result_widget].spacing(20))
+            .padding(20)
+            .width(Length::Fill)
+            .height(Length::Fill)
             .into()
     }
 }

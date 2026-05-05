@@ -1,6 +1,11 @@
 use iced::Size;
 use opencv::{core, highgui, imgcodecs, prelude::*, videoio};
-use std::{fs, process, sync::mpsc, thread, time::Duration};
+use std::{
+    fs, process,
+    sync::{Arc, Mutex, mpsc},
+    thread,
+    time::Duration,
+};
 
 mod party;
 use party::ocr::JapaneseOcr;
@@ -18,7 +23,12 @@ const MASTER_IMG_DIR: &str = "master_data/pokemon_images";
 
 fn main() -> iced::Result {
     let _ = fs::create_dir_all("master_data");
+
+    // カメラ → OCRワーカー間のチャンネル
     let (tx, rx) = mpsc::sync_channel::<core::Mat>(1);
+    // OCRワーカー → UIへの結果通知チャンネル
+    let (ocr_tx, ocr_rx) = mpsc::channel::<String>();
+    let ocr_rx = Arc::new(Mutex::new(ocr_rx));
 
     // ─── ワーカースレッド (OCR + アイコン推論) ───
     thread::spawn(move || {
@@ -46,19 +56,16 @@ fn main() -> iced::Result {
         let ocr_config = default_ocr_config();
 
         while let Ok(frame) = rx.recv() {
-            // 画像保存
             let _ = imgcodecs::imwrite(CAPTURE_PATH, &frame, &core::Vector::new());
 
-            // 1. OCR処理 (相手の情報を読み取る)
+            // 1. OCR処理 (標準出力せず、チャンネル経由でUIへ送信)
             if let Ok(ocr_crops) = get_pokemon_crops(&frame, &ocr_config) {
                 if let Some(Some(crop)) = ocr_crops.get("target_text").and_then(|v| v.get(0)) {
                     match ocr_processor.recognize(crop) {
                         Ok(text) => {
-                            let clean_text = text.trim();
+                            let clean_text = text.trim().to_string();
                             if !clean_text.is_empty() {
-                                println!("\n=== OCR Recognition ===");
-                                println!("{}", clean_text);
-                                println!("=======================\n");
+                                let _ = ocr_tx.send(clean_text);
                             }
                         }
                         Err(e) => eprintln!("[OCR Error] {}", e),
@@ -108,11 +115,13 @@ fn main() -> iced::Result {
     });
 
     // ─── メインスレッド (UI) ───
+    let ocr_rx_for_ui = ocr_rx.clone();
     iced::application(
-        PokeEditorApp::new,
+        move || PokeEditorApp::new(ocr_rx_for_ui.clone()),
         PokeEditorApp::update,
         PokeEditorApp::view,
     )
+    .subscription(PokeEditorApp::subscription)
     .title("Pokemon Editor")
     .window(iced::window::Settings {
         size: Size {
