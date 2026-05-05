@@ -14,9 +14,6 @@ pub mod damage;
 pub mod ui;
 use ui::app::PokeEditorApp;
 
-// 警告を避けるため未使用定数に _ を付与
-const _USAGE_URL: &str = "https://gamewith.jp/pokemon-champions/555373";
-const _USAGE_OUT: &str = "master_data/usage.json";
 const CAPTURE_PATH: &str = "capture.png";
 const ONNX_PATH: &str = "models/dinov2_vits14.onnx";
 const MASTER_IMG_DIR: &str = "master_data/pokemon_images";
@@ -40,7 +37,7 @@ fn main() -> iced::Result {
         };
         let crop_config = default_crop_config();
 
-        for frame in rx {
+        while let Ok(frame) = rx.recv() {
             let _ = imgcodecs::imwrite(CAPTURE_PATH, &frame, &core::Vector::new());
 
             match identifier.identify_party_batch(&frame, &crop_config) {
@@ -62,20 +59,15 @@ fn main() -> iced::Result {
 
     // ─── サブスレッド (OpenCV映像キャプチャ) ───
     thread::spawn(move || {
-        // warning回避のため cam_opt への mut は付与しない
         let cam_opt = videoio::VideoCapture::new(0, videoio::CAP_V4L2).ok();
         if let Some(mut cam) = cam_opt {
             let _ = cam.set(videoio::CAP_PROP_FRAME_WIDTH, 1920.0);
             let _ = cam.set(videoio::CAP_PROP_FRAME_HEIGHT, 1080.0);
             let mut frame = core::Mat::default();
-            let mut last_save = Instant::now();
             loop {
                 if cam.read(&mut frame).is_ok() && !frame.empty() {
-                    if last_save.elapsed() >= Duration::from_secs(1) {
-                        if let Ok(cloned) = frame.try_clone() {
-                            let _ = tx.try_send(cloned);
-                        }
-                        last_save = Instant::now();
+                    if let Ok(cloned) = frame.try_clone() {
+                        let _ = tx.try_send(cloned);
                     }
                     let _ = highgui::imshow("Switch 2 Rust Stream", &frame);
 
@@ -84,6 +76,7 @@ fn main() -> iced::Result {
                         println!("'q' が押されたため終了します...");
                         process::exit(0);
                     }
+                    thread::sleep(Duration::from_millis(33)); // 30fps
                 }
             }
         } else {

@@ -17,11 +17,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::LazyLock;
 
-pub mod domain;
 pub mod application;
+pub mod damage;
+pub mod domain;
 pub mod infrastructure;
 pub mod party;
-pub mod damage;
 pub mod ui;
 
 // ─── 正規表現の事前コンパイル (Rust 1.80+ LazyLock) ──────────────────────────

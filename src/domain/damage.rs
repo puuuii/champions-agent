@@ -104,4 +104,3 @@ mod tests {
         assert_eq!(args.attacker_id, 1);
     }
 }
-

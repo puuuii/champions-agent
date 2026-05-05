@@ -81,9 +81,10 @@ pub fn calculate_damage(master: &MasterData, args: &DamageArgs) -> Result<u32, S
 
     // タイプ一致補正 (STAB)[cite: 20, 26]
     if let Some(atk_types) = master.pokemon_types.get(&args.attacker_id)
-        && atk_types.contains(&m.type_id) {
-            damage = (damage * 1.5).floor();
-        }
+        && atk_types.contains(&m.type_id)
+    {
+        damage = (damage * 1.5).floor();
+    }
 
     // 乱数・急所補正[cite: 18, 20, 26]
     damage = (damage * args.rng_roll).floor();
