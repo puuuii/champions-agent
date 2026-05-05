@@ -8,6 +8,14 @@
 pub mod cutout;
 pub mod identifier;
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_party_module_exists() {
+        assert!(true);
+    }
+}
+
 // 実際に外部（main）から呼ばれる型のみを re-export
 pub use cutout::default_crop_config;
 pub use identifier::PartyIdentifier;
