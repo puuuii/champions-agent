@@ -30,20 +30,20 @@ pub fn calculate_damage(master: &MasterData, args: &DamageArgs) -> Result<u32, S
         .ok_or("Defender not found")?;
     let m = master.moves.get(&args.move_id).ok_or("Move not found")?;
 
-    // 変化技(1)または威力が0の場合はダメージ0[cite: 20, 26]
+    // 変化技(1)または威力が0の場合はダメージ0
     if m.damage_class_id == 1 || m.power.unwrap_or(0) == 0 {
         return Ok(0);
     }
     let power = m.power.unwrap();
 
-    // 物理(2)か特殊(3)かでインデックスを決定[cite: 18, 26]
+    // 物理(2)か特殊(3)かでインデックスを決定
     let (a_idx, d_idx) = if m.damage_class_id == 2 {
         (1, 2)
     } else {
         (3, 4)
     };
 
-    // 性格補正の解決[cite: 20, 26]
+    // 性格補正の解決
     let get_nature_mult = |nature_id: u32, stat_idx: usize| -> f64 {
         if let Some(nature) = master.natures.get(&nature_id) {
             if nature.increased_stat_id == (stat_idx + 1) as u32 {
@@ -76,23 +76,23 @@ pub fn calculate_damage(master: &MasterData, args: &DamageArgs) -> Result<u32, S
         (d_val * d_r.0) / d_r.1
     };
 
-    // 基本ダメージ計算[cite: 18, 26]
+    // 基本ダメージ計算
     let mut damage = (((22 * power * final_a) / final_d) / 50 + 2) as f64;
 
-    // タイプ一致補正 (STAB)[cite: 20, 26]
+    // タイプ一致補正 (STAB)
     if let Some(atk_types) = master.pokemon_types.get(&args.attacker_id)
         && atk_types.contains(&m.type_id)
     {
         damage = (damage * 1.5).floor();
     }
 
-    // 乱数・急所補正[cite: 18, 20, 26]
+    // 乱数・急所補正
     damage = (damage * args.rng_roll).floor();
     if args.is_critical {
         damage = (damage * 1.5).floor();
     }
 
-    // タイプ相性計算[cite: 18, 20, 26]
+    // タイプ相性計算
     if let Some(target_types) = master.pokemon_types.get(&args.defender_id) {
         let mut efficacy = 1.0;
         for &t_id in target_types {

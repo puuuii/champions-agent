@@ -21,10 +21,12 @@ indexmap = { version = "2", features = ["serde"] }
 opencv   = { version = "0.93", features = ["videoio", "highgui", "imgcodecs"] }
 ort = { version = "=2.0.0-rc.12", features = ["cuda"] }
 ndarray = "0.17"
-image = "0.24"
 rayon = "1.10"
 csv = "1.3"
 iced = "0.14.0"
+ocrs = "0.7.0"
+manga-ocr-rs = "0.1.3"
+image = "0.25.10"
 
 [dev-dependencies]
 rstest = "0.21.0"

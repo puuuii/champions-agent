@@ -7,6 +7,7 @@
 
 pub mod cutout;
 pub mod identifier;
+pub mod ocr;
 
 #[cfg(test)]
 mod tests {

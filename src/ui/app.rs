@@ -12,13 +12,13 @@ pub enum Tab {
 }
 
 pub struct PokeEditorApp {
-    pokemons: [PokemonState; 6], // 6匹分の状態[cite: 2]
+    pokemons: [PokemonState; 6], // 6匹分の状態
     active_tab: Tab,             // 現在表示中のタブ
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    PokemonMsg(usize, super::pokemon::Message), // ポケモン個別の更新メッセージ[cite: 2]
+    PokemonMsg(usize, super::pokemon::Message), // ポケモン個別の更新メッセージ
     TabSelected(Tab),                           // タブ切り替えメッセージ
 }
 
@@ -26,7 +26,7 @@ impl PokeEditorApp {
     pub fn new() -> (Self, Task<Message>) {
         (
             Self {
-                // 既存の初期化[cite: 2]
+                // 既存の初期化
                 pokemons: std::array::from_fn(|i| PokemonState::new(format!("poke{}", i + 1))),
                 active_tab: Tab::Editor, // 最初は編集画面
             },
@@ -37,7 +37,7 @@ impl PokeEditorApp {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::PokemonMsg(index, msg) => {
-                self.pokemons[index].update(msg); // pokemon.rsのupdateを呼ぶ[cite: 1, 2]
+                self.pokemons[index].update(msg); // pokemon.rsのupdateを呼ぶ
             }
             Message::TabSelected(tab) => {
                 self.active_tab = tab; // タブを切り替える
@@ -72,7 +72,7 @@ impl PokeEditorApp {
 
     // --- 内部ヘルパー関数 ---
 
-    // 既存の6匹並べるビュー[cite: 2]
+    // 既存の6匹並べるビュー
     fn editor_view(&self) -> Element<'_, Message> {
         let grid = row![
             column![

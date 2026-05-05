@@ -51,10 +51,10 @@ def cutout_image(input_path: str, config: CutoutConfig, output_path: str) -> Non
 # ---- 使用例 ----
 if __name__ == "__main__":
     config = CutoutConfig(
-        x_start_pct=0.38,  # 左から25%
-        y_start_pct=0.02,  # 上から10%
-        x_end_pct=0.62,    # 左から75%
-        y_end_pct=0.06,    # 上から90%
+        x_start_pct=0.38,
+        y_start_pct=0.02,
+        x_end_pct=0.62,
+        y_end_pct=0.06,
     )
 
     cutout_image(

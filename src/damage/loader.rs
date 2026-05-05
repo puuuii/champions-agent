@@ -53,7 +53,7 @@ impl MasterData {
             type_efficacy.insert((rec.damage_type_id, rec.target_type_id), rec.damage_factor);
         }
 
-        // 6. 性格 (追加)[cite: 19, 21]
+        // 6. 性格 (追加)
         let mut natures = HashMap::new();
         let mut rdr = csv::Reader::from_path(p.join("natures.csv"))?;
         for result in rdr.deserialize() {
