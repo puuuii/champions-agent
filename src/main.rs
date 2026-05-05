@@ -1,11 +1,6 @@
 use iced::Size;
 use opencv::{core, highgui, imgcodecs, prelude::*, videoio};
-use std::{
-    fs, process,
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{fs, process, sync::mpsc, thread, time::Duration};
 
 mod party;
 use party::{PartyIdentifier, default_crop_config};
