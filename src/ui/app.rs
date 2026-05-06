@@ -1,9 +1,9 @@
 use super::pokemon::{PokemonState, PokemonView};
+use iced::futures::SinkExt;
 use iced::{
     Element, Length, Subscription, Task, Theme,
     widget::{button, column, container, row, scrollable, text},
 };
-use iced::futures::SinkExt;
 use serde::Deserialize;
 use std::sync::{Arc, Mutex, mpsc};
 
@@ -104,24 +104,27 @@ impl PokeEditorApp {
         let _ = RECEIVER.set(self.info_receiver.clone());
 
         iced::Subscription::run(|| {
-            iced::stream::channel::<Message>(100, |mut output: iced::futures::channel::mpsc::Sender<Message>| {
-                let receiver = RECEIVER.get().unwrap().clone();
-                async move {
-                    loop {
-                        let receiver = receiver.clone();
-                        let result = tokio::task::spawn_blocking(move || {
-                            receiver.lock().unwrap().recv().ok()
-                        })
-                        .await;
+            iced::stream::channel::<Message>(
+                100,
+                |mut output: iced::futures::channel::mpsc::Sender<Message>| {
+                    let receiver = RECEIVER.get().unwrap().clone();
+                    async move {
+                        loop {
+                            let receiver = receiver.clone();
+                            let result = tokio::task::spawn_blocking(move || {
+                                receiver.lock().unwrap().recv().ok()
+                            })
+                            .await;
 
-                        if let Ok(Some(party)) = result {
-                            let _ = output.send(Message::PartyInfoReceived(party)).await;
-                        } else {
-                            break;
+                            if let Ok(Some(party)) = result {
+                                let _ = output.send(Message::PartyInfoReceived(party)).await;
+                            } else {
+                                break;
+                            }
                         }
                     }
-                }
-            })
+                },
+            )
         })
     }
 
@@ -170,53 +173,79 @@ impl PokeEditorApp {
 
     fn selection_support_view(&self) -> Element<'_, Message> {
         let content: Element<'_, Message> = match &self.opponent_party {
-            None => text::<Theme, iced::Renderer>("ポケモン選出画面を待機中...").size(20).into(),
+            None => text::<Theme, iced::Renderer>("ポケモン選出画面を待機中...")
+                .size(20)
+                .into(),
             Some(party) => {
-                let party_view = row(party
-                    .iter()
-                    .map(|p| {
-                        let mut col = column![
-                            text(&p.name).size(24),
-                            text(format!("タイプ: {}", p.types.join(", "))).size(14),
-                        ]
-                        .spacing(10);
+                // 左端の見出し列（固定幅）を設定し、各項目の行を初期化
+                let mut name_row =
+                    row![container(text("名前").size(16)).width(Length::Fixed(80.0))].spacing(10);
+                let mut type_row =
+                    row![container(text("タイプ").size(16)).width(Length::Fixed(80.0))].spacing(10);
+                let mut move_row =
+                    row![container(text("技").size(16)).width(Length::Fixed(80.0))].spacing(10);
+                let mut item_row =
+                    row![container(text("持ち物").size(16)).width(Length::Fixed(80.0))].spacing(10);
+                let mut ev_row =
+                    row![container(text("努力値").size(16)).width(Length::Fixed(80.0))].spacing(10);
+                let mut nature_row =
+                    row![container(text("性格").size(16)).width(Length::Fixed(80.0))].spacing(10);
 
-                        // 技 上位8つ
-                        col = col.push(text("よく使われる技:").size(16));
-                        for m in p.moves.iter().take(8) {
-                            col = col.push(text(format!("  {} ({})", m.name, m.rate)).size(12));
-                        }
+                // 各ポケモンのデータを列として追加
+                for p in party {
+                    // 名前
+                    name_row = name_row
+                        .push(container(text(&p.name).size(20)).width(Length::FillPortion(1)));
 
-                        // アイテム 上位3つ
-                        col = col.push(text("アイテム:").size(16));
-                        for i in p.items.iter().take(3) {
-                            col = col.push(text(format!("  {} ({})", i.name, i.rate)).size(12));
-                        }
+                    // タイプ
+                    type_row = type_row.push(
+                        container(text(p.types.join(", ")).size(14)).width(Length::FillPortion(1)),
+                    );
 
-                        // 努力値配分 上位3つ
-                        col = col.push(text("努力値配分:").size(16));
-                        for e in p.effort_values.iter().take(3) {
-                            col = col.push(
-                                text(format!(
-                                    "  H{} A{} B{} C{} D{} S{} ({})",
-                                    e.h, e.a, e.b, e.c, e.d, e.s, e.rate
-                                ))
-                                .size(12),
-                            );
-                        }
+                    // 技 (上位8つ)
+                    let mut moves_col = column![].spacing(2);
+                    for m in p.moves.iter().take(8) {
+                        moves_col =
+                            moves_col.push(text(format!("{} ({})", m.name, m.rate)).size(12));
+                    }
+                    move_row = move_row.push(container(moves_col).width(Length::FillPortion(1)));
 
-                        // 性格 上位2つ
-                        col = col.push(text("性格:").size(16));
-                        for n in p.natures.iter().take(2) {
-                            col = col.push(text(format!("  {} ({})", n.name, n.rate)).size(12));
-                        }
+                    // アイテム (上位3つ)
+                    let mut items_col = column![].spacing(2);
+                    for i in p.items.iter().take(3) {
+                        items_col =
+                            items_col.push(text(format!("{} ({})", i.name, i.rate)).size(12));
+                    }
+                    item_row = item_row.push(container(items_col).width(Length::FillPortion(1)));
 
-                        col.spacing(5).width(Length::FillPortion(1)).into()
-                    })
-                    .collect::<Vec<Element<'_, Message>>>())
-                .spacing(10);
+                    // 努力値配分 (上位3つ)
+                    let mut evs_col = column![].spacing(2);
+                    for e in p.effort_values.iter().take(3) {
+                        evs_col = evs_col.push(
+                            text(format!(
+                                "H{} A{} B{} C{} D{} S{}\n({})",
+                                e.h, e.a, e.b, e.c, e.d, e.s, e.rate
+                            ))
+                            .size(12),
+                        );
+                    }
+                    ev_row = ev_row.push(container(evs_col).width(Length::FillPortion(1)));
 
-                scrollable(party_view).into()
+                    // 性格 (上位2つ)
+                    let mut natures_col = column![].spacing(2);
+                    for n in p.natures.iter().take(2) {
+                        natures_col =
+                            natures_col.push(text(format!("{} ({})", n.name, n.rate)).size(12));
+                    }
+                    nature_row =
+                        nature_row.push(container(natures_col).width(Length::FillPortion(1)));
+                }
+
+                // 全ての行を縦に並べてマトリクス（表）を完成させる
+                let table =
+                    column![name_row, type_row, move_row, item_row, ev_row, nature_row].spacing(20); // 行と行の間隔を開けて見やすくする
+
+                scrollable(table).into()
             }
         };
 
