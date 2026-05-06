@@ -1,6 +1,7 @@
 use iced::Size;
 use opencv::{core, highgui, imgcodecs, prelude::*, videoio};
 use std::{
+    collections::HashMap,
     fs, process,
     sync::{Arc, Mutex, mpsc},
     thread,
@@ -15,20 +16,31 @@ use party::{
 
 pub mod damage;
 pub mod ui;
-use ui::app::PokeEditorApp;
+
+// app.rsのPokemonUsageを使用できるようにインポート
+use ui::app::{PokeEditorApp, PokemonUsage};
 
 const CAPTURE_PATH: &str = "capture.png";
 const ONNX_PATH: &str = "models/dinov2_vits14.onnx";
 const MASTER_IMG_DIR: &str = "master_data/pokemon_images";
+const USAGE_JSON_PATH: &str = "master_data/usage.json";
 
 fn main() -> iced::Result {
     let _ = fs::create_dir_all("master_data");
 
+    // --- JSONのメモリロード ---
+    let usage_data = fs::read_to_string(USAGE_JSON_PATH).unwrap_or_else(|_| "[]".to_string());
+    let usages: Vec<PokemonUsage> = serde_json::from_str(&usage_data).unwrap_or_default();
+    let usage_map: HashMap<String, PokemonUsage> =
+        usages.into_iter().map(|u| (u.name.clone(), u)).collect();
+    let usage_map = Arc::new(usage_map);
+
     // カメラ → OCRワーカー間のチャンネル
     let (tx, rx) = mpsc::sync_channel::<core::Mat>(1);
-    // OCRワーカー → UIへの結果通知チャンネル
-    let (ocr_tx, ocr_rx) = mpsc::channel::<String>();
-    let ocr_rx = Arc::new(Mutex::new(ocr_rx));
+
+    // OCRワーカー → UIへの詳細情報通知チャンネル (StringからVec<PokemonUsage>に変更)
+    let (info_tx, info_rx) = mpsc::channel::<Vec<PokemonUsage>>();
+    let info_rx = Arc::new(Mutex::new(info_rx));
 
     // ─── ワーカースレッド (OCR + アイコン推論) ───
     thread::spawn(move || {
@@ -55,39 +67,62 @@ fn main() -> iced::Result {
         let crop_config = default_crop_config();
         let ocr_config = default_ocr_config();
 
+        // [1回前の判定, 2回前の判定]
+        let mut history = [false, false];
+
         while let Ok(frame) = rx.recv() {
             let _ = imgcodecs::imwrite(CAPTURE_PATH, &frame, &core::Vector::new());
 
-            // 1. OCR処理 (標準出力せず、チャンネル経由でUIへ送信)
+            let mut is_selection_screen = false;
+
+            // 1. OCR処理で画面判定
             if let Ok(ocr_crops) = get_pokemon_crops(&frame, &ocr_config) {
                 if let Some(Some(crop)) = ocr_crops.get("target_text").and_then(|v| v.get(0)) {
-                    match ocr_processor.recognize(crop) {
-                        Ok(text) => {
-                            let clean_text = text.trim().to_string();
-                            if !clean_text.is_empty() {
-                                let _ = ocr_tx.send(clean_text);
-                            }
+                    if let Ok(text) = ocr_processor.recognize(crop) {
+                        let clean_text = text.trim();
+                        // 判定条件は維持（不要な標準出力や単発送信は削除）
+                        if clean_text.contains("シングル") && clean_text.contains("バトル") {
+                            is_selection_screen = true;
                         }
-                        Err(e) => eprintln!("[OCR Error] {}", e),
                     }
                 }
             }
 
-            // 2. 敵ポケモン推論処理 (DINOv2)
-            match identifier.identify_party_batch(&frame, &crop_config) {
-                Ok(results) => {
-                    if !results.is_empty() {
-                        let mut keys: Vec<_> = results.keys().collect();
-                        keys.sort();
-                        println!("--- アイコン推論結果 ---");
-                        for key in keys {
-                            let (name, score) = &results[key];
-                            println!("  [{key}] {name} ({score:.4})");
+            // 2. 選出画面の場合のみ推論処理
+            if is_selection_screen {
+                // 前回または前々回が既に「選出画面」だった場合はDINOv2推論をスキップ
+                if history[0] || history[1] {
+                    history[1] = history[0];
+                    history[0] = true;
+                    continue;
+                }
+
+                match identifier.identify_party_batch(&frame, &crop_config) {
+                    Ok(results) => {
+                        if !results.is_empty() {
+                            let mut keys: Vec<_> = results.keys().collect();
+                            keys.sort();
+
+                            let mut party_info = Vec::new();
+                            for key in keys {
+                                let (name, _) = &results[key];
+                                // 推論した名前をキーにメモリから詳細情報を引き当てる
+                                if let Some(usage) = usage_map.get(name) {
+                                    party_info.push(usage.clone());
+                                }
+                            }
+
+                            // UIへ推論＆JSON抽出結果を送信
+                            let _ = info_tx.send(party_info);
                         }
                     }
+                    Err(e) => eprintln!("[Worker] 推論エラー: {e}"),
                 }
-                Err(e) => eprintln!("[Worker] 推論エラー: {e}"),
             }
+
+            // 履歴の更新
+            history[1] = history[0];
+            history[0] = is_selection_screen;
         }
     });
 
@@ -115,9 +150,9 @@ fn main() -> iced::Result {
     });
 
     // ─── メインスレッド (UI) ───
-    let ocr_rx_for_ui = ocr_rx.clone();
+    let info_rx_for_ui = info_rx.clone();
     iced::application(
-        move || PokeEditorApp::new(ocr_rx_for_ui.clone()),
+        move || PokeEditorApp::new(info_rx_for_ui.clone()),
         PokeEditorApp::update,
         PokeEditorApp::view,
     )
