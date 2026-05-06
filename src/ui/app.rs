@@ -1,4 +1,5 @@
 use super::pokemon::{PokemonState, PokemonView};
+use crate::domain::master_data::MasterData;
 use iced::futures::SinkExt;
 use iced::{
     Element, Length, Subscription, Task, Theme,
@@ -59,6 +60,7 @@ pub struct PokeEditorApp {
     active_tab: Tab,
     opponent_party: Option<Vec<PokemonUsage>>, // OCRのテキストではなくポケモン情報を保持
     info_receiver: Arc<Mutex<mpsc::Receiver<Vec<PokemonUsage>>>>,
+    master_data: Arc<MasterData>,
 }
 
 #[derive(Debug, Clone)]
@@ -71,13 +73,17 @@ pub enum Message {
 impl PokeEditorApp {
     pub fn new(
         info_receiver: Arc<Mutex<mpsc::Receiver<Vec<PokemonUsage>>>>,
+        master_data: Arc<MasterData>,
     ) -> (Self, Task<Message>) {
         (
             Self {
-                pokemons: std::array::from_fn(|i| PokemonState::new(format!("poke{}", i + 1))),
+                pokemons: std::array::from_fn(|i| {
+                    PokemonState::new(format!("poke{}", i + 1), master_data.clone())
+                }),
                 active_tab: Tab::Editor,
                 opponent_party: None,
                 info_receiver,
+                master_data,
             },
             Task::none(),
         )
@@ -151,7 +157,6 @@ impl PokeEditorApp {
     }
 
     fn editor_view(&self) -> Element<'_, Message> {
-        // ... (既存のまま) ...
         let grid = row![
             column![
                 PokemonView::view(&self.pokemons[0]).map(|m| Message::PokemonMsg(0, m)),
@@ -177,7 +182,6 @@ impl PokeEditorApp {
                 .size(20)
                 .into(),
             Some(party) => {
-                // 左端の見出し列（固定幅）を設定し、各項目の行を初期化
                 let mut name_row =
                     row![container(text("名前").size(16)).width(Length::Fixed(80.0))].spacing(10);
                 let mut type_row =
@@ -191,34 +195,24 @@ impl PokeEditorApp {
                 let mut nature_row =
                     row![container(text("性格").size(16)).width(Length::Fixed(80.0))].spacing(10);
 
-                // 各ポケモンのデータを列として追加
                 for p in party {
-                    // 名前
                     name_row = name_row
                         .push(container(text(&p.name).size(20)).width(Length::FillPortion(1)));
-
-                    // タイプ
                     type_row = type_row.push(
                         container(text(p.types.join(", ")).size(14)).width(Length::FillPortion(1)),
                     );
-
-                    // 技 (上位8つ)
                     let mut moves_col = column![].spacing(2);
                     for m in p.moves.iter().take(8) {
                         moves_col =
                             moves_col.push(text(format!("{} ({})", m.name, m.rate)).size(12));
                     }
                     move_row = move_row.push(container(moves_col).width(Length::FillPortion(1)));
-
-                    // アイテム (上位3つ)
                     let mut items_col = column![].spacing(2);
                     for i in p.items.iter().take(3) {
                         items_col =
                             items_col.push(text(format!("{} ({})", i.name, i.rate)).size(12));
                     }
                     item_row = item_row.push(container(items_col).width(Length::FillPortion(1)));
-
-                    // 努力値配分 (上位3つ)
                     let mut evs_col = column![].spacing(2);
                     for e in p.effort_values.iter().take(3) {
                         evs_col = evs_col.push(
@@ -230,8 +224,6 @@ impl PokeEditorApp {
                         );
                     }
                     ev_row = ev_row.push(container(evs_col).width(Length::FillPortion(1)));
-
-                    // 性格 (上位2つ)
                     let mut natures_col = column![].spacing(2);
                     for n in p.natures.iter().take(2) {
                         natures_col =
@@ -241,10 +233,8 @@ impl PokeEditorApp {
                         nature_row.push(container(natures_col).width(Length::FillPortion(1)));
                 }
 
-                // 全ての行を縦に並べてマトリクス（表）を完成させる
                 let table =
-                    column![name_row, type_row, move_row, item_row, ev_row, nature_row].spacing(20); // 行と行の間隔を開けて見やすくする
-
+                    column![name_row, type_row, move_row, item_row, ev_row, nature_row].spacing(20);
                 scrollable(table).into()
             }
         };

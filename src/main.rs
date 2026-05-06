@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+mod domain;
 mod party;
 use party::ocr::JapaneseOcr;
 use party::{
@@ -17,6 +18,7 @@ use party::{
 pub mod damage;
 pub mod ui;
 
+use domain::master_data::MasterData;
 // app.rsのPokemonUsageを使用できるようにインポート
 use ui::app::{PokeEditorApp, PokemonUsage};
 
@@ -24,9 +26,17 @@ const CAPTURE_PATH: &str = "capture.png";
 const ONNX_PATH: &str = "models/dinov2_vits14.onnx";
 const MASTER_IMG_DIR: &str = "master_data/pokemon_images";
 const USAGE_JSON_PATH: &str = "master_data/usage.json";
+const MASTER_DATA_DIR: &str = "master_data";
 
 fn main() -> iced::Result {
     let _ = fs::create_dir_all("master_data");
+
+    // --- マスターデータのロード ---
+    let master_data = MasterData::load(MASTER_DATA_DIR).unwrap_or_else(|e| {
+        eprintln!("Warning: Failed to load master data: {}", e);
+        MasterData::default()
+    });
+    let master_data = Arc::new(master_data);
 
     // --- JSONのメモリロード ---
     let usage_data = fs::read_to_string(USAGE_JSON_PATH).unwrap_or_else(|_| "[]".to_string());
@@ -151,8 +161,9 @@ fn main() -> iced::Result {
 
     // ─── メインスレッド (UI) ───
     let info_rx_for_ui = info_rx.clone();
+    let master_data_for_ui = master_data.clone();
     iced::application(
-        move || PokeEditorApp::new(info_rx_for_ui.clone()),
+        move || PokeEditorApp::new(info_rx_for_ui.clone(), master_data_for_ui.clone()),
         PokeEditorApp::update,
         PokeEditorApp::view,
     )
@@ -163,6 +174,12 @@ fn main() -> iced::Result {
             width: 1200.0,
             height: 800.0,
         },
+        exit_on_close_request: true,
+        ..Default::default()
+    })
+    .font(include_bytes!("../assets/fonts/NotoSansJP-Regular.ttf"))
+    .default_font(iced::Font {
+        family: iced::font::Family::Name("Noto Sans JP"),
         ..Default::default()
     })
     .run()

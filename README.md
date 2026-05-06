@@ -11,7 +11,5 @@ export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 
 ## 情報源
-- pokemon.csv: https://github.com/PokeAPI/pokeapi/blob/master/data/v2/csv/pokemon.csv
-- pokemon_stats.csv: https://github.com/PokeAPI/pokeapi/blob/master/data/v2/csv/pokemon_stats.csv
-- stats.csv: https://github.com/PokeAPI/pokeapi/blob/master/data/v2/csv/stats.csv
+- csv: https://github.com/PokeAPI/pokeapi/tree/master/data/v2/csv
 - ダメージ計算: https://champsone.com/#/articles/damage-formula
