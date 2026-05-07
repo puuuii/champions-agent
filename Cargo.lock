@@ -569,10 +569,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
-name = "champions-agent"
+name = "champions-agent-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "champions-application",
+ "champions-domain",
+ "champions-infrastructure",
+ "champions-interface",
+ "champions-runtime",
  "csv",
  "iced",
  "image",
@@ -589,6 +594,46 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "champions-application"
+version = "0.1.0"
+dependencies = [
+ "champions-domain",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "champions-domain"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "champions-infrastructure"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "champions-application",
+ "champions-domain",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "champions-interface"
+version = "0.1.0"
+
+[[package]]
+name = "champions-runtime"
+version = "0.1.0"
+dependencies = [
+ "champions-application",
+ "champions-interface",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

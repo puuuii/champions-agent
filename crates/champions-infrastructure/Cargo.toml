@@ -1,0 +1,10 @@
+[package]
+name = "champions-infrastructure"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+champions-domain = { path = "../champions-domain" }
+champions-application = { path = "../champions-application" }
+thiserror.workspace = true
+anyhow.workspace = true

@@ -177,7 +177,7 @@ fn main() -> iced::Result {
         exit_on_close_request: true,
         ..Default::default()
     })
-    .font(include_bytes!("../assets/fonts/NotoSansJP-Regular.ttf"))
+    .font(include_bytes!("../../../assets/fonts/NotoSansJP-Regular.ttf"))
     .default_font(iced::Font {
         family: iced::font::Family::Name("Noto Sans JP"),
         ..Default::default()
