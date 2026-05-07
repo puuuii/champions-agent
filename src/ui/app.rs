@@ -49,6 +49,9 @@ pub struct PokemonUsage {
 }
 // ----------------------------------------
 
+use super::JAPANESE_FONT;
+use crate::domain::party::SavedParty;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Editor,
@@ -68,6 +71,7 @@ pub enum Message {
     PokemonMsg(usize, super::pokemon::Message),
     TabSelected(Tab),
     PartyInfoReceived(Vec<PokemonUsage>), // 受け取るメッセージを変更
+    Save,
 }
 
 impl PokeEditorApp {
@@ -75,11 +79,40 @@ impl PokeEditorApp {
         info_receiver: Arc<Mutex<mpsc::Receiver<Vec<PokemonUsage>>>>,
         master_data: Arc<MasterData>,
     ) -> (Self, Task<Message>) {
+        let saved_path = std::path::Path::new("master_data/mypoke/party.json");
+        let pokemons = if saved_path.exists() {
+            if let Ok(data) = std::fs::read_to_string(saved_path) {
+                if let Ok(saved_party) = serde_json::from_str::<SavedParty>(&data) {
+                    let mut pokes = std::array::from_fn(|i| {
+                        PokemonState::new(format!("poke{}", i + 1), master_data.clone())
+                    });
+                    for (i, saved) in saved_party.pokemons.into_iter().enumerate().take(6) {
+                        pokes[i] = PokemonState::from_saved(
+                            format!("poke{}", i + 1),
+                            saved,
+                            master_data.clone(),
+                        );
+                    }
+                    pokes
+                } else {
+                    std::array::from_fn(|i| {
+                        PokemonState::new(format!("poke{}", i + 1), master_data.clone())
+                    })
+                }
+            } else {
+                std::array::from_fn(|i| {
+                    PokemonState::new(format!("poke{}", i + 1), master_data.clone())
+                })
+            }
+        } else {
+            std::array::from_fn(|i| {
+                PokemonState::new(format!("poke{}", i + 1), master_data.clone())
+            })
+        };
+
         (
             Self {
-                pokemons: std::array::from_fn(|i| {
-                    PokemonState::new(format!("poke{}", i + 1), master_data.clone())
-                }),
+                pokemons,
                 active_tab: Tab::Editor,
                 opponent_party: None,
                 info_receiver,
@@ -99,6 +132,19 @@ impl PokeEditorApp {
             }
             Message::PartyInfoReceived(party) => {
                 self.opponent_party = Some(party);
+            }
+            Message::Save => {
+                let saved_party = SavedParty {
+                    pokemons: self.pokemons.iter().map(|p| p.to_saved()).collect(),
+                };
+                let dir = std::path::Path::new("master_data/mypoke");
+                if !dir.exists() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let path = dir.join("party.json");
+                if let Ok(json) = serde_json::to_string_pretty(&saved_party) {
+                    let _ = std::fs::write(path, json);
+                }
             }
         }
         Task::none()
@@ -136,10 +182,10 @@ impl PokeEditorApp {
 
     pub fn view(&self) -> Element<'_, Message> {
         let tab_bar = row![
-            button(text("パーティ編集"))
+            button(text("パーティ編集").font(JAPANESE_FONT))
                 .on_press(Message::TabSelected(Tab::Editor))
                 .padding(10),
-            button(text("選出サポート"))
+            button(text("選出サポート").font(JAPANESE_FONT))
                 .on_press(Message::TabSelected(Tab::SelectionSupport))
                 .padding(10),
         ]
@@ -173,44 +219,54 @@ impl PokeEditorApp {
         ]
         .spacing(40);
 
-        scrollable(column![text("Party Editor").size(32), grid].spacing(20)).into()
+        let header = row![
+            text("Party Editor").size(32),
+            button(text("保存").font(JAPANESE_FONT))
+                .on_press(Message::Save)
+                .padding(10),
+        ]
+        .spacing(20)
+        .align_y(iced::Alignment::Center);
+
+        scrollable(column![header, grid].spacing(20)).into()
     }
 
     fn selection_support_view(&self) -> Element<'_, Message> {
         let content: Element<'_, Message> = match &self.opponent_party {
             None => text::<Theme, iced::Renderer>("ポケモン選出画面を待機中...")
                 .size(20)
+                .font(JAPANESE_FONT)
                 .into(),
             Some(party) => {
                 let mut name_row =
-                    row![container(text("名前").size(16)).width(Length::Fixed(80.0))].spacing(10);
+                    row![container(text("名前").font(JAPANESE_FONT).size(16)).width(Length::Fixed(80.0))].spacing(10);
                 let mut type_row =
-                    row![container(text("タイプ").size(16)).width(Length::Fixed(80.0))].spacing(10);
+                    row![container(text("タイプ").font(JAPANESE_FONT).size(16)).width(Length::Fixed(80.0))].spacing(10);
                 let mut move_row =
-                    row![container(text("技").size(16)).width(Length::Fixed(80.0))].spacing(10);
+                    row![container(text("技").font(JAPANESE_FONT).size(16)).width(Length::Fixed(80.0))].spacing(10);
                 let mut item_row =
-                    row![container(text("持ち物").size(16)).width(Length::Fixed(80.0))].spacing(10);
+                    row![container(text("持ち物").font(JAPANESE_FONT).size(16)).width(Length::Fixed(80.0))].spacing(10);
                 let mut ev_row =
-                    row![container(text("努力値").size(16)).width(Length::Fixed(80.0))].spacing(10);
+                    row![container(text("努力値").font(JAPANESE_FONT).size(16)).width(Length::Fixed(80.0))].spacing(10);
                 let mut nature_row =
-                    row![container(text("性格").size(16)).width(Length::Fixed(80.0))].spacing(10);
+                    row![container(text("性格").font(JAPANESE_FONT).size(16)).width(Length::Fixed(80.0))].spacing(10);
 
                 for p in party {
                     name_row = name_row
-                        .push(container(text(&p.name).size(20)).width(Length::FillPortion(1)));
+                        .push(container(text(&p.name).font(JAPANESE_FONT).size(20)).width(Length::FillPortion(1)));
                     type_row = type_row.push(
-                        container(text(p.types.join(", ")).size(14)).width(Length::FillPortion(1)),
+                        container(text(p.types.join(", ")).font(JAPANESE_FONT).size(14)).width(Length::FillPortion(1)),
                     );
                     let mut moves_col = column![].spacing(2);
                     for m in p.moves.iter().take(8) {
                         moves_col =
-                            moves_col.push(text(format!("{} ({})", m.name, m.rate)).size(12));
+                            moves_col.push(text(format!("{} ({})", m.name, m.rate)).font(JAPANESE_FONT).size(12));
                     }
                     move_row = move_row.push(container(moves_col).width(Length::FillPortion(1)));
                     let mut items_col = column![].spacing(2);
                     for i in p.items.iter().take(3) {
                         items_col =
-                            items_col.push(text(format!("{} ({})", i.name, i.rate)).size(12));
+                            items_col.push(text(format!("{} ({})", i.name, i.rate)).font(JAPANESE_FONT).size(12));
                     }
                     item_row = item_row.push(container(items_col).width(Length::FillPortion(1)));
                     let mut evs_col = column![].spacing(2);
@@ -220,6 +276,7 @@ impl PokeEditorApp {
                                 "H{} A{} B{} C{} D{} S{}\n({})",
                                 e.h, e.a, e.b, e.c, e.d, e.s, e.rate
                             ))
+                            .font(JAPANESE_FONT)
                             .size(12),
                         );
                     }
@@ -227,7 +284,7 @@ impl PokeEditorApp {
                     let mut natures_col = column![].spacing(2);
                     for n in p.natures.iter().take(2) {
                         natures_col =
-                            natures_col.push(text(format!("{} ({})", n.name, n.rate)).size(12));
+                            natures_col.push(text(format!("{} ({})", n.name, n.rate)).font(JAPANESE_FONT).size(12));
                     }
                     nature_row =
                         nature_row.push(container(natures_col).width(Length::FillPortion(1)));
@@ -239,7 +296,7 @@ impl PokeEditorApp {
             }
         };
 
-        container(column![text("選出サポート").size(32), content].spacing(20))
+        container(column![text("選出サポート").font(JAPANESE_FONT).size(32), content].spacing(20))
             .padding(20)
             .width(Length::Fill)
             .height(Length::Fill)

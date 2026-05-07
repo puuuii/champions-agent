@@ -1,3 +1,25 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct SavedPokemon {
+    pub species: String,
+    pub item: String,
+    pub h: String,
+    pub a: String,
+    pub b: String,
+    pub c: String,
+    pub d: String,
+    pub s: String,
+    pub nature: String,
+    pub ability: String,
+    pub moves: [String; 4],
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct SavedParty {
+    pub pokemons: Vec<SavedPokemon>,
+}
+
 pub struct Pokemon {
     pub name: String,
 }

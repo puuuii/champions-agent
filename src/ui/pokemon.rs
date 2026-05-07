@@ -5,6 +5,7 @@ use iced::{
 };
 use std::sync::Arc;
 use crate::domain::master_data::MasterData;
+use super::JAPANESE_FONT;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldType {
@@ -52,6 +53,8 @@ pub enum Message {
     SuggestionSelected(String),
 }
 
+use crate::domain::party::SavedPokemon;
+
 impl PokemonState {
     pub fn new(label: String, master_data: Arc<MasterData>) -> Self {
         Self {
@@ -70,6 +73,42 @@ impl PokemonState {
             suggestions: Vec::new(),
             active_field: None,
             master_data,
+        }
+    }
+
+    pub fn from_saved(label: String, saved: SavedPokemon, master_data: Arc<MasterData>) -> Self {
+        Self {
+            label,
+            species: saved.species,
+            item: saved.item,
+            h: saved.h,
+            a: saved.a,
+            b: saved.b,
+            c: saved.c,
+            d: saved.d,
+            s: saved.s,
+            nature: saved.nature,
+            ability: saved.ability,
+            moves: saved.moves,
+            suggestions: Vec::new(),
+            active_field: None,
+            master_data,
+        }
+    }
+
+    pub fn to_saved(&self) -> SavedPokemon {
+        SavedPokemon {
+            species: self.species.clone(),
+            item: self.item.clone(),
+            h: self.h.clone(),
+            a: self.a.clone(),
+            b: self.b.clone(),
+            c: self.c.clone(),
+            d: self.d.clone(),
+            s: self.s.clone(),
+            nature: self.nature.clone(),
+            ability: self.ability.clone(),
+            moves: self.moves.clone(),
         }
     }
 
@@ -151,11 +190,6 @@ impl PokemonState {
 }
 
 pub struct PokemonView;
-
-const JAPANESE_FONT: iced::Font = iced::Font {
-    family: iced::font::Family::Name("Noto Sans JP"),
-    ..iced::Font::DEFAULT
-};
 
 impl PokemonView {
     pub fn view(state: &PokemonState) -> Element<'_, Message> {
