@@ -506,7 +506,7 @@ fn format_slot_name(pokemon: &RecognizedPokemonView) -> String {
 
     let mut lines = vec![format!("#{} {}", pokemon.slot_index + 1, display_name)];
 
-    if pokemon.usage.is_none() {
+    if pokemon.display_name.is_none() {
         if let Some(candidates) = format_candidate_summary(pokemon) {
             lines.push(candidates);
         }

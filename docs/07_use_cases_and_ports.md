@@ -305,7 +305,6 @@ pub struct IdentifyOpponentPartyCommand {
 }
 
 pub struct RecognitionConfig {
-    pub min_confidence: f32,
     pub top_candidates: usize,
 }
 

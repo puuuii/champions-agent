@@ -238,7 +238,6 @@ pub struct AppConfig {
 | `CaptureConfig.fps` | `Some(30)` |
 | `PreviewConfig.max_width` | `960` |
 | `PreviewConfig.target_fps` | `15` |
-| `RecognitionConfig.min_confidence` | `0.70` から調整 |
 | `RecognitionConfig.top_candidates` | `3` |
 
 ## 完了条件
