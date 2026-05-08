@@ -117,8 +117,8 @@ fn main() -> iced::Result {
     .title("Pokemon Editor")
     .window(iced::window::Settings {
         size: Size {
-            width: 1200.0,
-            height: 800.0,
+            width: 1600.0,
+            height: 900.0,
         },
         exit_on_close_request: true,
         ..Default::default()

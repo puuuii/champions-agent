@@ -23,7 +23,6 @@ use super::JAPANESE_FONT;
 pub enum Tab {
     Editor,
     SelectionSupport,
-    Preview,
 }
 
 pub struct PokeEditorApp {
@@ -206,19 +205,30 @@ impl PokeEditorApp {
             button(text("選出サポート").font(JAPANESE_FONT))
                 .on_press(Message::TabSelected(Tab::SelectionSupport))
                 .padding(10),
-            button(text("プレビュー").font(JAPANESE_FONT))
-                .on_press(Message::TabSelected(Tab::Preview))
-                .padding(10),
         ]
         .spacing(10);
 
-        let content = match self.active_tab {
+        let right_content = match self.active_tab {
             Tab::Editor => self.editor_view(),
             Tab::SelectionSupport => self.selection_support_view(),
-            Tab::Preview => self.preview_view(),
         };
 
-        container(column![tab_bar, content].spacing(20).padding(20))
+        let right_panel = column![tab_bar, right_content].spacing(20);
+
+        let left_panel = self.preview_view();
+
+        let layout = row![
+            container(left_panel)
+                .width(Length::FillPortion(1))
+                .height(Length::Fill),
+            container(right_panel)
+                .width(Length::FillPortion(2))
+                .height(Length::Fill),
+        ]
+        .spacing(20);
+
+        container(layout)
+            .padding(20)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
