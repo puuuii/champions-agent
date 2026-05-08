@@ -5,7 +5,7 @@ use champions_infrastructure::persistence::{
     CsvCatalogRepository, JsonPartyRepository, JsonUsageRepository,
 };
 use champions_infrastructure::{
-    MangaOcrEngine, OnnxPartyIdentifier, OpenCvCropper, RecognitionAdapter,
+    MangaOcrEngine, OnnxPartyIdentifier, OpenCvCropper, RecognitionAdapter, GameWithUsageFetcher,
 };
 use champions_runtime::RuntimeBuilder;
 use iced::Size;
@@ -40,6 +40,9 @@ fn main() -> iced::Result {
     );
     let party_repo = Arc::new(JsonPartyRepository::new(app_paths.party_json_path()));
     let usage_repo = Arc::new(JsonUsageRepository::new(usage_json_path));
+
+    // --- Fetcher ---
+    let usage_fetcher = Arc::new(GameWithUsageFetcher::new());
 
     // --- Recognition setup ---
     let recognition_port = build_recognition_port(
@@ -100,6 +103,8 @@ fn main() -> iced::Result {
     let catalog_repo_for_ui = catalog_repo.clone();
     let party_repo_for_ui = party_repo.clone();
     let command_sender_for_ui = command_sender.clone();
+    let usage_fetcher_for_ui = usage_fetcher.clone();
+    let usage_repo_for_ui = usage_repo.clone();
 
     iced::daemon(
         move || {
@@ -108,6 +113,8 @@ fn main() -> iced::Result {
                 catalog_repo_for_ui.clone(),
                 party_repo_for_ui.clone(),
                 command_sender_for_ui.clone(),
+                usage_fetcher_for_ui.clone(),
+                usage_repo_for_ui.clone(),
             )
         },
         PokeEditorApp::update,

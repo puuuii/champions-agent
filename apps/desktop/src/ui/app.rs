@@ -1,10 +1,10 @@
 use super::components::VideoPreview;
 use super::pokemon::{FieldType, PokemonState, PokemonView, SuggestionRequest};
 use super::subscriptions::{self, RuntimeMessage};
-use champions_application::ports::{CatalogRepository, PartyRepository};
+use champions_application::ports::{CatalogRepository, PartyRepository, UsageFetcher, UsageRepository, UsageSource};
 use champions_application::use_cases::{
     LoadPartyUseCase, SavePartyCommand, SavePartyUseCase, SuggestKind, SuggestNamesQuery,
-    SuggestNamesUseCase,
+    SuggestNamesUseCase, RefreshUsageDataCommand, RefreshUsageDataUseCase,
 };
 use champions_domain::party::SavedParty;
 use champions_domain::usage::PokemonUsageSummary;
@@ -38,6 +38,11 @@ pub struct PokeEditorApp {
     latest_preview: Option<PreviewFrame>,
     preview_window_id: Option<window::Id>,
     main_window_id: Option<window::Id>,
+
+    // --- 新規追加 ---
+    usage_fetcher: Arc<dyn UsageFetcher>,
+    usage_repo: Arc<dyn UsageRepository>,
+    is_refreshing: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +53,10 @@ pub enum Message {
     Save,
     RuntimeMsg(RuntimeMessage),
     WindowClosed(window::Id),
+
+    // --- 新規追加 ---
+    RefreshUsageData,
+    UsageDataRefreshed(Result<usize, String>),
 }
 
 impl PokeEditorApp {
@@ -56,6 +65,8 @@ impl PokeEditorApp {
         catalog_repo: Arc<dyn CatalogRepository>,
         party_repo: Arc<dyn PartyRepository>,
         command_sender: Arc<CommandSender>,
+        usage_fetcher: Arc<dyn UsageFetcher>,
+        usage_repo: Arc<dyn UsageRepository>,
     ) -> (Self, Task<Message>) {
         let load_uc = LoadPartyUseCase::new(party_repo.as_ref());
         let pokemons = match load_uc.execute() {
@@ -98,6 +109,9 @@ impl PokeEditorApp {
                 latest_preview: None,
                 preview_window_id: Some(preview_id),
                 main_window_id: Some(main_id),
+                usage_fetcher,
+                usage_repo,
+                is_refreshing: false,
             },
             Task::batch([main_task.discard(), preview_task.discard()]),
         )
@@ -139,6 +153,39 @@ impl PokeEditorApp {
                     self.preview_window_id = None;
                 } else if self.main_window_id == Some(id) {
                     return iced::exit();
+                }
+            }
+            // --- 新規追加: 使用率データの更新 ---
+            Message::RefreshUsageData => {
+                if self.is_refreshing {
+                    return Task::none();
+                }
+                self.is_refreshing = true;
+
+                let fetcher = self.usage_fetcher.clone();
+                let repo = self.usage_repo.clone();
+
+                return Task::perform(
+                    async move {
+                        let use_case = RefreshUsageDataUseCase::new(fetcher.as_ref(), repo.as_ref());
+                        let cmd = RefreshUsageDataCommand {
+                            source: UsageSource::GameWith,
+                        };
+                        tokio::task::spawn_blocking(move || use_case.execute(cmd))
+                            .await
+                            .unwrap()
+                    },
+                    |result| match result {
+                        Ok(res) => Message::UsageDataRefreshed(Ok(res.count)),
+                        Err(e) => Message::UsageDataRefreshed(Err(e.to_string())),
+                    }
+                );
+            }
+            Message::UsageDataRefreshed(result) => {
+                self.is_refreshing = false;
+                match result {
+                    Ok(count) => println!("使用率データを {} 件更新しました", count),
+                    Err(e) => eprintln!("使用率データの更新に失敗しました: {}", e),
                 }
             }
         }
@@ -299,6 +346,23 @@ impl PokeEditorApp {
     }
 
     fn selection_support_view(&self) -> Element<'_, Message> {
+        // --- 新規追加: 更新ボタンの設定 ---
+        let refresh_btn = button(text(if self.is_refreshing { "更新中..." } else { "使用率データを更新" }).font(JAPANESE_FONT))
+            .padding(10);
+
+        let refresh_btn = if self.is_refreshing {
+            refresh_btn
+        } else {
+            refresh_btn.on_press(Message::RefreshUsageData)
+        };
+
+        let header_row = row![
+            text("選出サポート").font(JAPANESE_FONT).size(32),
+            refresh_btn
+        ]
+        .spacing(20)
+        .align_y(iced::Alignment::Center);
+
         let content: Element<'_, Message> = match &self.opponent_party {
             None => text::<Theme, iced::Renderer>("ポケモン選出画面を待機中...")
                 .size(20)
@@ -390,7 +454,8 @@ impl PokeEditorApp {
             }
         };
 
-        container(column![text("選出サポート").font(JAPANESE_FONT).size(32), content].spacing(20))
+        // --- 画面上部に header_row(更新ボタンを含む)を適用 ---
+        container(column![header_row, content].spacing(20))
             .padding(20)
             .width(Length::Fill)
             .height(Length::Fill)
