@@ -131,7 +131,11 @@ pub struct RecognizedParty {
 }
 ```
 
+<<<<<<< HEAD
+`confidence` が閾値未満の場合は `display_name: None` または unknown として扱う。
+=======
 `display_name` には最上位候補を採用し、`confidence` は一致度の区分けだけに使う。
+>>>>>>> rearchitect
 
 ### Usage
 

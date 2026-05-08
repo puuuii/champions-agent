@@ -676,15 +676,23 @@ impl PokeEditorApp {
     }
 }
 
-fn format_opponent_hint(pokemon: &OpponentPokemonState) -> Option<String> {
-    if let Some(recognized_name) = pokemon.recognized_name.as_deref() {
-        if recognized_name != pokemon.input_name {
-            return Some(format!("認識: {}", recognized_name));
+fn format_slot_name(pokemon: &RecognizedPokemonView) -> String {
+    let display_name = pokemon
+        .usage
+        .as_ref()
+        .map(|usage| usage.name.as_str())
+        .or(pokemon.display_name.as_deref())
+        .unwrap_or("未判定");
+
+    let mut lines = vec![format!("#{} {}", pokemon.slot_index + 1, display_name)];
+
+    if pokemon.display_name.is_none() {
+        if let Some(candidates) = format_candidate_summary(pokemon) {
+            lines.push(candidates);
         }
-        return None;
     }
 
-    format_candidate_summary(pokemon)
+    lines.join("\n")
 }
 
 fn format_candidate_summary(pokemon: &OpponentPokemonState) -> Option<String> {
