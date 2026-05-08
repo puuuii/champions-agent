@@ -27,10 +27,6 @@ pub struct PartyImageSet {
 
 #[derive(Debug, Clone)]
 pub struct RecognitionConfig {
-<<<<<<< HEAD
-    pub min_confidence: f32,
-=======
->>>>>>> rearchitect
     pub top_candidates: usize,
 }
 
