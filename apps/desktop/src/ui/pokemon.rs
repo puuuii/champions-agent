@@ -1,11 +1,9 @@
-use iced::{
-    Element,
-    widget::{column, container, row, text, text_input, button},
-    Border, Color,
-};
-use std::sync::Arc;
-use crate::domain::master_data::MasterData;
 use super::JAPANESE_FONT;
+use champions_domain::party::{EffortValueSpread, MoveSet, PokemonBuild};
+use iced::{
+    Border, Color, Element,
+    widget::{button, column, container, row, text, text_input},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldType {
@@ -14,6 +12,12 @@ pub enum FieldType {
     Nature,
     Item,
     Ability,
+}
+
+#[derive(Debug, Clone)]
+pub struct SuggestionRequest {
+    pub field: FieldType,
+    pub query: String,
 }
 
 #[derive(Debug, Clone)]
@@ -30,11 +34,9 @@ pub struct PokemonState {
     pub nature: String,
     pub ability: String,
     pub moves: [String; 4],
-    
-    // サジェスト用
+
     pub suggestions: Vec<String>,
     pub active_field: Option<FieldType>,
-    master_data: Arc<MasterData>,
 }
 
 #[derive(Debug, Clone)]
@@ -53,10 +55,8 @@ pub enum Message {
     SuggestionSelected(String),
 }
 
-use crate::domain::party::SavedPokemon;
-
 impl PokemonState {
-    pub fn new(label: String, master_data: Arc<MasterData>) -> Self {
+    pub fn new(label: String) -> Self {
         Self {
             label,
             species: String::new(),
@@ -72,55 +72,81 @@ impl PokemonState {
             moves: Default::default(),
             suggestions: Vec::new(),
             active_field: None,
-            master_data,
         }
     }
 
-    pub fn from_saved(label: String, saved: SavedPokemon, master_data: Arc<MasterData>) -> Self {
+    pub fn from_saved_build(label: String, build: PokemonBuild) -> Self {
         Self {
             label,
-            species: saved.species,
-            item: saved.item,
-            h: saved.h,
-            a: saved.a,
-            b: saved.b,
-            c: saved.c,
-            d: saved.d,
-            s: saved.s,
-            nature: saved.nature,
-            ability: saved.ability,
-            moves: saved.moves,
+            species: build.species_name,
+            item: build.item_name.unwrap_or_default(),
+            h: build.effort_values.h.to_string(),
+            a: build.effort_values.a.to_string(),
+            b: build.effort_values.b.to_string(),
+            c: build.effort_values.c.to_string(),
+            d: build.effort_values.d.to_string(),
+            s: build.effort_values.s.to_string(),
+            nature: build.nature_name.unwrap_or_default(),
+            ability: build.ability_name.unwrap_or_default(),
+            moves: build.moves.moves,
             suggestions: Vec::new(),
             active_field: None,
-            master_data,
         }
     }
 
-    pub fn to_saved(&self) -> SavedPokemon {
-        SavedPokemon {
-            species: self.species.clone(),
-            item: self.item.clone(),
-            h: self.h.clone(),
-            a: self.a.clone(),
-            b: self.b.clone(),
-            c: self.c.clone(),
-            d: self.d.clone(),
-            s: self.s.clone(),
-            nature: self.nature.clone(),
-            ability: self.ability.clone(),
-            moves: self.moves.clone(),
+    pub fn to_build(&self) -> PokemonBuild {
+        PokemonBuild {
+            species_name: self.species.clone(),
+            item_name: if self.item.is_empty() {
+                None
+            } else {
+                Some(self.item.clone())
+            },
+            ability_name: if self.ability.is_empty() {
+                None
+            } else {
+                Some(self.ability.clone())
+            },
+            nature_name: if self.nature.is_empty() {
+                None
+            } else {
+                Some(self.nature.clone())
+            },
+            effort_values: EffortValueSpread {
+                h: self.h.parse().unwrap_or(0),
+                a: self.a.parse().unwrap_or(0),
+                b: self.b.parse().unwrap_or(0),
+                c: self.c.parse().unwrap_or(0),
+                d: self.d.parse().unwrap_or(0),
+                s: self.s.parse().unwrap_or(0),
+            },
+            moves: MoveSet {
+                moves: self.moves.clone(),
+            },
         }
     }
 
-    pub fn update(&mut self, message: Message) {
+    pub fn set_suggestions(&mut self, suggestions: Vec<String>) {
+        self.suggestions = suggestions;
+    }
+
+    pub fn update(&mut self, message: Message) -> Option<SuggestionRequest> {
         match message {
             Message::SpeciesChanged(v) => {
                 self.species = v;
-                self.update_suggestions(FieldType::Species, &self.species.clone());
+                self.active_field = Some(FieldType::Species);
+                return Some(SuggestionRequest {
+                    field: FieldType::Species,
+                    query: self.species.clone(),
+                });
             }
             Message::ItemChanged(v) => {
                 self.item = v;
-                self.update_suggestions(FieldType::Item, &self.item.clone());
+                self.active_field = Some(FieldType::Item);
+                return Some(SuggestionRequest {
+                    field: FieldType::Item,
+                    query: self.item.clone(),
+                });
             }
             Message::HChanged(v) => self.h = self.validate_stat(v),
             Message::AChanged(v) => self.a = self.validate_stat(v),
@@ -130,15 +156,27 @@ impl PokemonState {
             Message::SChanged(v) => self.s = self.validate_stat(v),
             Message::NatureChanged(v) => {
                 self.nature = v;
-                self.update_suggestions(FieldType::Nature, &self.nature.clone());
+                self.active_field = Some(FieldType::Nature);
+                return Some(SuggestionRequest {
+                    field: FieldType::Nature,
+                    query: self.nature.clone(),
+                });
             }
             Message::AbilityChanged(v) => {
                 self.ability = v;
-                self.update_suggestions(FieldType::Ability, &self.ability.clone());
+                self.active_field = Some(FieldType::Ability);
+                return Some(SuggestionRequest {
+                    field: FieldType::Ability,
+                    query: self.ability.clone(),
+                });
             }
             Message::MoveChanged(i, v) => {
                 self.moves[i] = v;
-                self.update_suggestions(FieldType::Move(i), &self.moves[i].clone());
+                self.active_field = Some(FieldType::Move(i));
+                return Some(SuggestionRequest {
+                    field: FieldType::Move(i),
+                    query: self.moves[i].clone(),
+                });
             }
             Message::SuggestionSelected(v) => {
                 if let Some(field) = self.active_field {
@@ -154,38 +192,16 @@ impl PokemonState {
                 self.active_field = None;
             }
         }
+        None
     }
 
     fn validate_stat(&self, input: String) -> String {
-        let filtered: String = input.chars().filter(|c| c.is_digit(10)).collect();
+        let filtered: String = input.chars().filter(|c| c.is_ascii_digit()).collect();
         if filtered.len() > 3 {
             filtered[..3].to_string()
         } else {
             filtered
         }
-    }
-
-    fn update_suggestions(&mut self, field: FieldType, query: &str) {
-        self.active_field = Some(field);
-        if query.is_empty() {
-            self.suggestions.clear();
-            return;
-        }
-
-        let source = match field {
-            FieldType::Species => &self.master_data.pokemon,
-            FieldType::Move(_) => &self.master_data.moves,
-            FieldType::Nature => &self.master_data.natures,
-            FieldType::Item => &self.master_data.items,
-            FieldType::Ability => &self.master_data.abilities,
-        };
-
-        self.suggestions = source
-            .iter()
-            .filter(|name: &&String| name.starts_with(query))
-            .take(5)
-            .cloned()
-            .collect();
     }
 }
 
@@ -205,15 +221,30 @@ impl PokemonView {
         };
 
         let species_field = Self::field_with_suggestions(
-            "名前:", &state.species, FieldType::Species, &state.suggestions, state.active_field, Message::SpeciesChanged
+            "名前:",
+            &state.species,
+            FieldType::Species,
+            &state.suggestions,
+            state.active_field,
+            Message::SpeciesChanged,
         );
 
         let item_field = Self::field_with_suggestions(
-            "持物:", &state.item, FieldType::Item, &state.suggestions, state.active_field, Message::ItemChanged
+            "持物:",
+            &state.item,
+            FieldType::Item,
+            &state.suggestions,
+            state.active_field,
+            Message::ItemChanged,
         );
 
         let nature_field = Self::field_with_suggestions(
-            "性格:", &state.nature, FieldType::Nature, &state.suggestions, state.active_field, Message::NatureChanged
+            "性格:",
+            &state.nature,
+            FieldType::Nature,
+            &state.suggestions,
+            state.active_field,
+            Message::NatureChanged,
         );
 
         let stats_col1 = column![
@@ -225,7 +256,12 @@ impl PokemonView {
         .spacing(10);
 
         let ability_field = Self::field_with_suggestions(
-            "特性:", &state.ability, FieldType::Ability, &state.suggestions, state.active_field, Message::AbilityChanged
+            "特性:",
+            &state.ability,
+            FieldType::Ability,
+            &state.suggestions,
+            state.active_field,
+            Message::AbilityChanged,
         );
 
         let stats_col2 = column![
@@ -237,16 +273,46 @@ impl PokemonView {
         .spacing(10);
 
         let moves_col = column![
-            Self::field_with_suggestions("技1:", &state.moves[0], FieldType::Move(0), &state.suggestions, state.active_field, |v| Message::MoveChanged(0, v)),
-            Self::field_with_suggestions("技2:", &state.moves[1], FieldType::Move(1), &state.suggestions, state.active_field, |v| Message::MoveChanged(1, v)),
-            Self::field_with_suggestions("技3:", &state.moves[2], FieldType::Move(2), &state.suggestions, state.active_field, |v| Message::MoveChanged(2, v)),
-            Self::field_with_suggestions("技4:", &state.moves[3], FieldType::Move(3), &state.suggestions, state.active_field, |v| Message::MoveChanged(3, v)),
+            Self::field_with_suggestions(
+                "技1:",
+                &state.moves[0],
+                FieldType::Move(0),
+                &state.suggestions,
+                state.active_field,
+                |v| Message::MoveChanged(0, v)
+            ),
+            Self::field_with_suggestions(
+                "技2:",
+                &state.moves[1],
+                FieldType::Move(1),
+                &state.suggestions,
+                state.active_field,
+                |v| Message::MoveChanged(1, v)
+            ),
+            Self::field_with_suggestions(
+                "技3:",
+                &state.moves[2],
+                FieldType::Move(2),
+                &state.suggestions,
+                state.active_field,
+                |v| Message::MoveChanged(2, v)
+            ),
+            Self::field_with_suggestions(
+                "技4:",
+                &state.moves[3],
+                FieldType::Move(3),
+                &state.suggestions,
+                state.active_field,
+                |v| Message::MoveChanged(3, v)
+            ),
         ]
         .spacing(10);
 
         container(
             column![
-                text(&state.label).size(18).color(Color::from_rgb(0.3, 0.3, 0.3)),
+                text(&state.label)
+                    .size(18)
+                    .color(Color::from_rgb(0.3, 0.3, 0.3)),
                 species_field,
                 item_field,
                 row![stats_col1, stats_col2, moves_col].spacing(20)
@@ -280,19 +346,19 @@ impl PokemonView {
                     .on_input(on_change)
                     .font(JAPANESE_FONT)
                     .width(120)
-            ].spacing(5)
+            ]
+            .spacing(5)
         ];
 
         if active_field == Some(field_type) && !suggestions.is_empty() {
-            let suggestion_list = column(
-                suggestions.iter().map(|s| {
-                    button(text(s).size(14))
-                        .on_press(Message::SuggestionSelected(s.clone()))
-                        .style(button::secondary)
-                        .width(120)
-                        .into()
-                })
-            ).spacing(1);
+            let suggestion_list = column(suggestions.iter().map(|s| {
+                button(text(s).size(14))
+                    .on_press(Message::SuggestionSelected(s.clone()))
+                    .style(button::secondary)
+                    .width(120)
+                    .into()
+            }))
+            .spacing(1);
 
             col = col.push(
                 container(suggestion_list)
@@ -304,7 +370,7 @@ impl PokemonView {
                             radius: 2.0.into(),
                         },
                         ..Default::default()
-                    })
+                    }),
             );
         }
         col.into()

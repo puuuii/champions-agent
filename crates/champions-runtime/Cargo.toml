@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+champions-domain = { path = "../champions-domain" }
 champions-interface = { path = "../champions-interface" }
 champions-application = { path = "../champions-application" }
 thiserror.workspace = true
