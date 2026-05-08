@@ -1,7 +1,7 @@
 """
-usage.json から img_url を取得し、
-master_data/pokemon_images/<name>.png としてダウンロードするスクリプト
-RGBA画像は白背景で合成して非透過PNGとして保存する
+usage.json から画像URLを取得し、
+resources/pokemon_images/<name>.png としてダウンロードするスクリプト。
+RGBA画像は白背景で合成して非透過PNGとして保存する。
 """
 
 import json
@@ -13,8 +13,8 @@ from pathlib import Path
 
 from PIL import Image
 
-INPUT_JSON = "master_data/usage.json"
-OUTPUT_DIR = Path("master_data/pokemon_images")
+INPUT_JSON = "cache/usage.json"
+OUTPUT_DIR = Path("resources/pokemon_images")
 DELAY_SEC = 0.5  # サーバー負荷軽減のためのウェイト
 
 
@@ -82,8 +82,9 @@ def main():
     success, skip, fail = 0, 0, 0
 
     for i, entry in enumerate(pokemon_list, 1):
+        id: int = entry.get("id", 0)
         name: str = entry.get("name", f"unknown_{i}")
-        url: str = entry.get("img_url", "")
+        url: str = f"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/{id}.png"
 
         if not url:
             print(f"[{i}/{total}] {name}: img_url が空のためスキップ")
