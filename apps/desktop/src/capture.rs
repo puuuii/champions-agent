@@ -8,14 +8,12 @@ use opencv::{core, prelude::*, videoio};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureBackend {
     Auto,
-    V4l2,
 }
 
 impl CaptureBackend {
     fn to_opencv_api(self) -> i32 {
         match self {
             Self::Auto => videoio::CAP_ANY,
-            Self::V4l2 => videoio::CAP_V4L2,
         }
     }
 }

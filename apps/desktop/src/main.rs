@@ -36,7 +36,11 @@ fn main() -> iced::Result {
     // --- Repositories ---
     let catalog_repo = Arc::new(
         CsvCatalogRepository::new(master_data_dir, Some(&usage_json_path))
+<<<<<<< HEAD
             .expect("failed to load catalog repository"),
+=======
+            .expect("failed to load catalog"),
+>>>>>>> f2f2b34b886871c5178965a723e4967226edb5b4
     );
     let party_repo = Arc::new(JsonPartyRepository::new(app_paths.party_json_path()));
     let usage_repo = Arc::new(JsonUsageRepository::new(usage_json_path));
