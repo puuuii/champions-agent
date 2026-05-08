@@ -63,7 +63,8 @@ fn js_to_json(js: &str) -> String {
 
 fn build_pokemon_list(raw: IndexMap<String, Value>) -> Vec<PokemonUsageSummary> {
     raw.into_iter()
-        .map(|(_p_id, p)| PokemonUsageSummary {
+        .map(|(gamewith_poke_id, p)| PokemonUsageSummary {
+            id: gamewith_poke_id,
             name: str_field(&p, "name"),
             types: str_array(&p["types"]),
             moves: parse_moves(&p["moves"]),

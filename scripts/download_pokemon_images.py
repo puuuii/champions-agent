@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PIL import Image
 
-INPUT_JSON = "master_data/usage.json"
+INPUT_JSON = "cache/usage.json"
 OUTPUT_DIR = Path("master_data/pokemon_images")
 DELAY_SEC = 0.5  # サーバー負荷軽減のためのウェイト
 
@@ -82,8 +82,9 @@ def main():
     success, skip, fail = 0, 0, 0
 
     for i, entry in enumerate(pokemon_list, 1):
+        id: int = entry.get("id", 0)
         name: str = entry.get("name", f"unknown_{i}")
-        url: str = entry.get("img_url", "")
+        url: str = f"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/{id}.png"
 
         if not url:
             print(f"[{i}/{total}] {name}: img_url が空のためスキップ")
