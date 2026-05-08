@@ -194,39 +194,17 @@ impl PartyIdentifier for OnnxPartyIdentifier {
         for (idx, slot) in slot_indices.into_iter().enumerate() {
             let emb = l2_normalize(embeddings.slice(s![idx, ..]).to_owned());
             let top_matches = self.find_top_matches(&emb, config.top_candidates);
-<<<<<<< HEAD
-
-            let best_score = top_matches.first().map(|(_, s)| *s).unwrap_or(0.0);
-=======
             let best_match = top_matches.first();
 
             let best_score = best_match.map(|(_, s)| *s).unwrap_or(0.0);
->>>>>>> rearchitect
             let confidence = ConfidenceScore::from_score(
                 best_score,
                 HIGH_CONFIDENCE_THRESHOLD,
                 LOW_CONFIDENCE_THRESHOLD,
             );
 
-<<<<<<< HEAD
-            let display_name = if best_score >= config.min_confidence {
-                top_matches
-                    .first()
-                    .map(|(i, _)| self.master_names[*i].clone())
-            } else {
-                None
-            };
-
-            let species_id = display_name.as_ref().and_then(|name| {
-                self.master_names
-                    .iter()
-                    .position(|n| n == name)
-                    .map(|i| SpeciesId(i as u32))
-            });
-=======
             let display_name = best_match.map(|(i, _)| self.master_names[*i].clone());
             let species_id = best_match.map(|(i, _)| SpeciesId(*i as u32));
->>>>>>> rearchitect
 
             let candidates = top_matches
                 .iter()
