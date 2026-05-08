@@ -62,10 +62,14 @@ impl FakeCatalogRepository {
 
 impl CatalogRepository for FakeCatalogRepository {
     fn suggest_species(&self, query: &str, limit: usize) -> Result<Vec<String>, CatalogError> {
+        if query.is_empty() {
+            return Ok(self.species.iter().take(limit).cloned().collect());
+        }
+
         Ok(self
             .species
             .iter()
-            .filter(|s| s.starts_with(query))
+            .filter(|s| s.contains(query))
             .take(limit)
             .cloned()
             .collect())
@@ -339,6 +343,26 @@ fn suggest_species_returns_matching() {
     assert_eq!(result.suggestions.len(), 2);
     assert!(result.suggestions.contains(&"ピカチュウ".to_string()));
     assert!(result.suggestions.contains(&"ピジョット".to_string()));
+}
+
+#[test]
+fn suggest_species_supports_partial_matching() {
+    let catalog =
+        FakeCatalogRepository::with_species(vec!["ピカチュウ", "ライチュウ", "ピジョット"]);
+    let uc = SuggestNamesUseCase::new(&catalog);
+
+    let result = uc
+        .execute(SuggestNamesQuery {
+            kind: SuggestKind::Species,
+            query: "チュ".to_string(),
+            limit: 10,
+        })
+        .unwrap();
+
+    assert_eq!(
+        result.suggestions,
+        vec!["ピカチュウ".to_string(), "ライチュウ".to_string()]
+    );
 }
 
 #[test]

@@ -151,11 +151,36 @@ impl CsvCatalogRepository {
             .cloned()
             .collect()
     }
+
+    fn partial_match(names: &[String], query: &str, limit: usize) -> Vec<String> {
+        if query.is_empty() {
+            return Vec::new();
+        }
+
+        let mut prefix_matches = Vec::new();
+        let mut contains_matches = Vec::new();
+
+        for name in names {
+            if name.starts_with(query) {
+                prefix_matches.push(name.clone());
+            } else if name.contains(query) {
+                contains_matches.push(name.clone());
+            }
+        }
+
+        prefix_matches.extend(
+            contains_matches
+                .into_iter()
+                .take(limit.saturating_sub(prefix_matches.len())),
+        );
+        prefix_matches.truncate(limit);
+        prefix_matches
+    }
 }
 
 impl CatalogRepository for CsvCatalogRepository {
     fn suggest_species(&self, query: &str, limit: usize) -> Result<Vec<String>, CatalogError> {
-        Ok(Self::prefix_match(&self.species_names, query, limit))
+        Ok(Self::partial_match(&self.species_names, query, limit))
     }
 
     fn suggest_moves(&self, query: &str, limit: usize) -> Result<Vec<String>, CatalogError> {
@@ -281,27 +306,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_prefix_match_empty_query() {
+    fn test_partial_match_empty_query() {
         let names = vec!["Pikachu".to_string(), "Pidgey".to_string()];
-        let result = CsvCatalogRepository::prefix_match(&names, "", 10);
+        let result = CsvCatalogRepository::partial_match(&names, "", 10);
         assert!(result.is_empty());
     }
 
     #[test]
-    fn test_prefix_match_finds_matches() {
+    fn test_partial_match_finds_prefix_and_contains_matches() {
         let names = vec![
+            "チュリネ".to_string(),
+            "ライチュウ".to_string(),
             "ピカチュウ".to_string(),
             "ピジョット".to_string(),
             "フシギダネ".to_string(),
         ];
-        let result = CsvCatalogRepository::prefix_match(&names, "ピ", 10);
-        assert_eq!(result.len(), 2);
+        let result = CsvCatalogRepository::partial_match(&names, "チュ", 10);
+        assert_eq!(
+            result,
+            vec![
+                "チュリネ".to_string(),
+                "ライチュウ".to_string(),
+                "ピカチュウ".to_string()
+            ]
+        );
     }
 
     #[test]
-    fn test_prefix_match_respects_limit() {
-        let names = vec!["ア".to_string(), "アイ".to_string(), "アウ".to_string()];
-        let result = CsvCatalogRepository::prefix_match(&names, "ア", 2);
-        assert_eq!(result.len(), 2);
+    fn test_partial_match_respects_limit() {
+        let names = vec![
+            "フシギソウ".to_string(),
+            "フシギダネ".to_string(),
+            "メガフシギバナ".to_string(),
+        ];
+        let result = CsvCatalogRepository::partial_match(&names, "フシギ", 2);
+        assert_eq!(
+            result,
+            vec!["フシギソウ".to_string(), "フシギダネ".to_string()]
+        );
     }
 }

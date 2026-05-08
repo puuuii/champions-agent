@@ -5,18 +5,20 @@ use champions_application::ports::{
     CatalogRepository, PartyRepository, UsageFetcher, UsageRepository, UsageSource,
 };
 use champions_application::use_cases::{
-    LoadPartyUseCase, RefreshUsageDataCommand, RefreshUsageDataUseCase, SavePartyCommand,
-    SavePartyUseCase, SuggestKind, SuggestNamesQuery, SuggestNamesUseCase,
+    GetPokemonUsageQuery, GetPokemonUsageUseCase, LoadPartyUseCase, RefreshUsageDataCommand,
+    RefreshUsageDataUseCase, SavePartyCommand, SavePartyUseCase, SuggestKind, SuggestNamesQuery,
+    SuggestNamesUseCase,
 };
-use champions_domain::party::SavedParty;
+use champions_domain::{party::SavedParty, usage::PokemonUsageSummary};
 use champions_interface::{
-    ConflictView, OpponentPartyView, PreviewFrame, RecognizedPokemonView, RuntimeEvent,
+    CandidateView, ConflictView, OpponentPartyView, PokemonUsageSummaryView, PreviewFrame,
+    RecognizedPokemonView, RuntimeEvent,
 };
 use champions_runtime::CommandSender;
 use iced::window;
 use iced::{
-    Element, Length, Size, Subscription, Task,
-    widget::{button, column, container, row, scrollable, text},
+    Border, Color, Element, Length, Size, Subscription, Task,
+    widget::{button, column, container, row, scrollable, text, text_input},
 };
 use std::sync::Arc;
 
@@ -28,10 +30,59 @@ pub enum Tab {
     SelectionSupport,
 }
 
+#[derive(Debug, Clone)]
+struct OpponentPartyState {
+    pokemons: Vec<OpponentPokemonState>,
+    conflicts: Vec<ConflictView>,
+}
+
+impl OpponentPartyState {
+    fn from_view(party: OpponentPartyView) -> Self {
+        Self {
+            pokemons: party
+                .pokemons
+                .into_iter()
+                .map(OpponentPokemonState::from_view)
+                .collect(),
+            conflicts: party.conflicts,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct OpponentPokemonState {
+    slot_index: u8,
+    input_name: String,
+    recognized_name: Option<String>,
+    candidates: Vec<CandidateView>,
+    usage: Option<PokemonUsageSummaryView>,
+    suggestions: Vec<String>,
+}
+
+impl OpponentPokemonState {
+    fn from_view(pokemon: RecognizedPokemonView) -> Self {
+        let input_name = pokemon
+            .usage
+            .as_ref()
+            .map(|usage| usage.name.clone())
+            .or_else(|| pokemon.display_name.clone())
+            .unwrap_or_default();
+
+        Self {
+            slot_index: pokemon.slot_index,
+            input_name,
+            recognized_name: pokemon.display_name,
+            candidates: pokemon.candidates,
+            usage: pokemon.usage,
+            suggestions: Vec::new(),
+        }
+    }
+}
+
 pub struct PokeEditorApp {
     pokemons: [PokemonState; 6],
     active_tab: Tab,
-    opponent_party: Option<OpponentPartyView>,
+    opponent_party: Option<OpponentPartyState>,
     catalog_repo: Arc<dyn CatalogRepository>,
     party_repo: Arc<dyn PartyRepository>,
     #[allow(dead_code)]
@@ -49,6 +100,8 @@ pub struct PokeEditorApp {
 #[derive(Debug, Clone)]
 pub enum Message {
     PokemonMsg(usize, super::pokemon::Message),
+    OpponentPokemonNameChanged(usize, String),
+    OpponentPokemonSuggestionSelected(usize, String),
     TabSelected(Tab),
     Save,
     RuntimeMsg(RuntimeMessage),
@@ -123,6 +176,12 @@ impl PokeEditorApp {
                     self.handle_suggestion_request(index, req);
                 }
             }
+            Message::OpponentPokemonNameChanged(index, value) => {
+                self.handle_opponent_pokemon_name_changed(index, value);
+            }
+            Message::OpponentPokemonSuggestionSelected(index, name) => {
+                self.handle_opponent_pokemon_selection(index, name);
+            }
             Message::TabSelected(tab) => {
                 self.active_tab = tab;
             }
@@ -183,7 +242,10 @@ impl PokeEditorApp {
             Message::UsageDataRefreshed(result) => {
                 self.is_refreshing = false;
                 match result {
-                    Ok(count) => println!("使用率データを {} 件更新しました", count),
+                    Ok(count) => {
+                        self.refresh_opponent_usage();
+                        println!("使用率データを {} 件更新しました", count);
+                    }
                     Err(e) => eprintln!("使用率データの更新に失敗しました: {}", e),
                 }
             }
@@ -194,7 +256,7 @@ impl PokeEditorApp {
     fn handle_runtime_event(&mut self, event: RuntimeEvent) {
         match event {
             RuntimeEvent::OpponentPartyRecognized { party, .. } => {
-                self.opponent_party = Some(party);
+                self.opponent_party = Some(OpponentPartyState::from_view(party));
                 self.active_tab = Tab::SelectionSupport;
             }
             RuntimeEvent::RuntimeStopped { .. } => {
@@ -234,6 +296,82 @@ impl PokeEditorApp {
             }
             Err(_) => {
                 self.pokemons[index].set_suggestions(Vec::new());
+            }
+        }
+    }
+
+    fn handle_opponent_pokemon_name_changed(&mut self, index: usize, input_name: String) {
+        let suggestions = self.suggest_species_names(&input_name);
+        let usage = self.lookup_usage_summary_view(&input_name);
+
+        if let Some(party) = self.opponent_party.as_mut() {
+            if let Some(pokemon) = party.pokemons.get_mut(index) {
+                pokemon.input_name = input_name;
+                pokemon.suggestions = suggestions;
+                pokemon.usage = usage;
+            }
+        }
+    }
+
+    fn handle_opponent_pokemon_selection(&mut self, index: usize, name: String) {
+        let usage = self.lookup_usage_summary_view(&name);
+
+        if let Some(party) = self.opponent_party.as_mut() {
+            if let Some(pokemon) = party.pokemons.get_mut(index) {
+                pokemon.input_name = name;
+                pokemon.suggestions.clear();
+                pokemon.usage = usage;
+            }
+        }
+    }
+
+    fn suggest_species_names(&self, query: &str) -> Vec<String> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Vec::new();
+        }
+
+        let suggest_uc = SuggestNamesUseCase::new(self.catalog_repo.as_ref());
+        let query = SuggestNamesQuery {
+            kind: SuggestKind::Species,
+            query: query.to_string(),
+            limit: 5,
+        };
+
+        match suggest_uc.execute(query) {
+            Ok(result) => result.suggestions,
+            Err(_) => Vec::new(),
+        }
+    }
+
+    fn lookup_usage_summary_view(&self, name: &str) -> Option<PokemonUsageSummaryView> {
+        let name = name.trim();
+        if name.is_empty() {
+            return None;
+        }
+
+        let get_usage_uc = GetPokemonUsageUseCase::new(self.usage_repo.as_ref());
+        match get_usage_uc.execute(GetPokemonUsageQuery {
+            name: name.to_string(),
+        }) {
+            Ok(result) => result.usage.as_ref().map(map_usage_summary_view),
+            Err(_) => None,
+        }
+    }
+
+    fn refresh_opponent_usage(&mut self) {
+        let usage_updates = match self.opponent_party.as_ref() {
+            Some(party) => party
+                .pokemons
+                .iter()
+                .map(|pokemon| self.lookup_usage_summary_view(&pokemon.input_name))
+                .collect::<Vec<_>>(),
+            None => return,
+        };
+
+        if let Some(party) = self.opponent_party.as_mut() {
+            for (pokemon, usage) in party.pokemons.iter_mut().zip(usage_updates) {
+                pokemon.usage = usage;
             }
         }
     }
@@ -381,12 +519,54 @@ impl PokeEditorApp {
                 ]
                 .spacing(10);
 
-                for pokemon in &party.pokemons {
+                for (index, pokemon) in party.pokemons.iter().enumerate() {
                     let usage = pokemon.usage.as_ref();
-                    name_row = name_row.push(
-                        container(text(format_slot_name(pokemon)).font(JAPANESE_FONT).size(16))
-                            .width(Length::FillPortion(1)),
-                    );
+
+                    let mut name_cell = column![
+                        text(format!("#{}", pokemon.slot_index + 1))
+                            .font(JAPANESE_FONT)
+                            .size(14),
+                        text_input("相手ポケモン名", &pokemon.input_name)
+                            .on_input(move |value| Message::OpponentPokemonNameChanged(
+                                index, value
+                            ))
+                            .font(JAPANESE_FONT)
+                            .width(Length::Fill),
+                    ]
+                    .spacing(6);
+
+                    if let Some(hint) = format_opponent_hint(pokemon) {
+                        name_cell = name_cell.push(text(hint).font(JAPANESE_FONT).size(12));
+                    }
+
+                    if !pokemon.suggestions.is_empty() {
+                        let suggestion_list =
+                            column(pokemon.suggestions.iter().map(|suggestion| {
+                                button(text(suggestion).font(JAPANESE_FONT).size(13))
+                                    .on_press(Message::OpponentPokemonSuggestionSelected(
+                                        index,
+                                        suggestion.clone(),
+                                    ))
+                                    .style(button::secondary)
+                                    .width(Length::Fill)
+                                    .into()
+                            }))
+                            .spacing(2);
+
+                        name_cell =
+                            name_cell.push(container(suggestion_list).padding(4).style(|_| {
+                                container::Style {
+                                    border: Border {
+                                        color: Color::from_rgb(0.7, 0.7, 0.7),
+                                        width: 1.0,
+                                        radius: 4.0.into(),
+                                    },
+                                    ..Default::default()
+                                }
+                            }));
+                    }
+
+                    name_row = name_row.push(container(name_cell).width(Length::FillPortion(1)));
                     type_row = type_row.push(
                         container(
                             text(
@@ -496,26 +676,18 @@ impl PokeEditorApp {
     }
 }
 
-fn format_slot_name(pokemon: &RecognizedPokemonView) -> String {
-    let display_name = pokemon
-        .usage
-        .as_ref()
-        .map(|usage| usage.name.as_str())
-        .or(pokemon.display_name.as_deref())
-        .unwrap_or("未判定");
-
-    let mut lines = vec![format!("#{} {}", pokemon.slot_index + 1, display_name)];
-
-    if pokemon.display_name.is_none() {
-        if let Some(candidates) = format_candidate_summary(pokemon) {
-            lines.push(candidates);
+fn format_opponent_hint(pokemon: &OpponentPokemonState) -> Option<String> {
+    if let Some(recognized_name) = pokemon.recognized_name.as_deref() {
+        if recognized_name != pokemon.input_name {
+            return Some(format!("認識: {}", recognized_name));
         }
+        return None;
     }
 
-    lines.join("\n")
+    format_candidate_summary(pokemon)
 }
 
-fn format_candidate_summary(pokemon: &RecognizedPokemonView) -> Option<String> {
+fn format_candidate_summary(pokemon: &OpponentPokemonState) -> Option<String> {
     let candidate = pokemon.candidates.first()?;
     Some(format!("候補: {}", candidate.display_name))
 }
@@ -540,4 +712,50 @@ fn format_conflict_summary(conflicts: &[ConflictView]) -> Option<String> {
         .join(" / ");
 
     Some(format!("重複候補があります: {body}"))
+}
+
+fn map_usage_summary_view(usage: &PokemonUsageSummary) -> PokemonUsageSummaryView {
+    PokemonUsageSummaryView {
+        name: usage.name.clone(),
+        types: usage.types.clone(),
+        moves: usage
+            .moves
+            .iter()
+            .map(|move_usage| champions_interface::MoveUsageView {
+                name: move_usage.name.clone(),
+                rate: move_usage.rate.clone(),
+            })
+            .collect(),
+        items: usage
+            .items
+            .iter()
+            .map(|item_usage| champions_interface::ItemUsageView {
+                name: item_usage.name.clone(),
+                rate: item_usage.rate.clone(),
+            })
+            .collect(),
+        effort_values: usage
+            .effort_values
+            .iter()
+            .map(
+                |effort_value_usage| champions_interface::EffortValueUsageView {
+                    h: effort_value_usage.h,
+                    a: effort_value_usage.a,
+                    b: effort_value_usage.b,
+                    c: effort_value_usage.c,
+                    d: effort_value_usage.d,
+                    s: effort_value_usage.s,
+                    rate: effort_value_usage.rate.clone(),
+                },
+            )
+            .collect(),
+        natures: usage
+            .natures
+            .iter()
+            .map(|nature_usage| champions_interface::NatureUsageView {
+                name: nature_usage.name.clone(),
+                rate: nature_usage.rate.clone(),
+            })
+            .collect(),
+    }
 }
