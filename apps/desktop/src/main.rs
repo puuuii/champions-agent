@@ -34,10 +34,10 @@ fn main() -> iced::Result {
     let master_img_dir = pokemon_images_dir.clone();
 
     // --- Repositories ---
-    let catalog_repo = Arc::new(CsvCatalogRepository::new(
-        master_data_dir,
-        Some(&usage_json_path),
-    ));
+    let catalog_repo = Arc::new(
+        CsvCatalogRepository::new(master_data_dir, Some(&usage_json_path))
+            .expect("failed to load catalog repository"),
+    );
     let party_repo = Arc::new(JsonPartyRepository::new(app_paths.party_json_path()));
     let usage_repo = Arc::new(JsonUsageRepository::new(usage_json_path));
 

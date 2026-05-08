@@ -15,6 +15,6 @@ champions-runtime = { path = "../../crates/champions-runtime" }
 champions-interface = { path = "../../crates/champions-interface" }
 
 anyhow.workspace = true
-opencv = { version = "0.93", features = ["videoio"] }
+opencv = { version = "0.98.2", features = ["videoio"] }
 iced = { version = "0.14", features = ["tokio", "image"] }
 tokio = { version = "1.52.2", features = ["full"] }
