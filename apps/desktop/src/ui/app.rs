@@ -1,10 +1,12 @@
 use super::components::VideoPreview;
 use super::pokemon::{FieldType, PokemonState, PokemonView, SuggestionRequest};
 use super::subscriptions::{self, RuntimeMessage};
-use champions_application::ports::{CatalogRepository, PartyRepository, UsageFetcher, UsageRepository, UsageSource};
+use champions_application::ports::{
+    CatalogRepository, PartyRepository, UsageFetcher, UsageRepository, UsageSource,
+};
 use champions_application::use_cases::{
-    LoadPartyUseCase, SavePartyCommand, SavePartyUseCase, SuggestKind, SuggestNamesQuery,
-    SuggestNamesUseCase, RefreshUsageDataCommand, RefreshUsageDataUseCase,
+    LoadPartyUseCase, RefreshUsageDataCommand, RefreshUsageDataUseCase, SavePartyCommand,
+    SavePartyUseCase, SuggestKind, SuggestNamesQuery, SuggestNamesUseCase,
 };
 use champions_domain::party::SavedParty;
 use champions_domain::usage::PokemonUsageSummary;
@@ -167,18 +169,22 @@ impl PokeEditorApp {
 
                 return Task::perform(
                     async move {
-                        let use_case = RefreshUsageDataUseCase::new(fetcher.as_ref(), repo.as_ref());
                         let cmd = RefreshUsageDataCommand {
                             source: UsageSource::GameWith,
                         };
-                        tokio::task::spawn_blocking(move || use_case.execute(cmd))
-                            .await
-                            .unwrap()
+                        // ↓ use_case の構築をクロージャ内に移動
+                        tokio::task::spawn_blocking(move || {
+                            let use_case =
+                                RefreshUsageDataUseCase::new(fetcher.as_ref(), repo.as_ref());
+                            use_case.execute(cmd)
+                        })
+                        .await
+                        .unwrap()
                     },
                     |result| match result {
                         Ok(res) => Message::UsageDataRefreshed(Ok(res.count)),
                         Err(e) => Message::UsageDataRefreshed(Err(e.to_string())),
-                    }
+                    },
                 );
             }
             Message::UsageDataRefreshed(result) => {
@@ -347,8 +353,15 @@ impl PokeEditorApp {
 
     fn selection_support_view(&self) -> Element<'_, Message> {
         // --- 新規追加: 更新ボタンの設定 ---
-        let refresh_btn = button(text(if self.is_refreshing { "更新中..." } else { "使用率データを更新" }).font(JAPANESE_FONT))
-            .padding(10);
+        let refresh_btn = button(
+            text(if self.is_refreshing {
+                "更新中..."
+            } else {
+                "使用率データを更新"
+            })
+            .font(JAPANESE_FONT),
+        )
+        .padding(10);
 
         let refresh_btn = if self.is_refreshing {
             refresh_btn
