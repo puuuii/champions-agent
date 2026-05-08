@@ -21,7 +21,7 @@ pub fn init_receivers(preview: Arc<Mutex<PreviewReceiver>>, event: Arc<Mutex<Eve
 
 pub fn preview_subscription() -> Subscription<RuntimeMessage> {
     Subscription::run(|| {
-        iced::stream::channel(2, |mut output| async move {
+        iced::stream::channel(2, |mut output: iced::futures::channel::mpsc::Sender<RuntimeMessage>| async move {
             let receiver = PREVIEW_RECEIVER
                 .get()
                 .expect("preview receiver not initialized")
@@ -44,7 +44,7 @@ pub fn preview_subscription() -> Subscription<RuntimeMessage> {
 
 pub fn event_subscription() -> Subscription<RuntimeMessage> {
     Subscription::run(|| {
-        iced::stream::channel(64, |mut output| async move {
+        iced::stream::channel(64, |mut output: iced::futures::channel::mpsc::Sender<RuntimeMessage>| async move {
             let receiver = EVENT_RECEIVER
                 .get()
                 .expect("event receiver not initialized")
