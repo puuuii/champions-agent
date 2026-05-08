@@ -11,8 +11,9 @@ use champions_domain::usage::PokemonUsageSummary;
 use champions_interface::{PreviewFrame, RuntimeEvent};
 use champions_runtime::CommandSender;
 use iced::futures::SinkExt;
+use iced::window;
 use iced::{
-    Element, Length, Subscription, Task, Theme,
+    Element, Length, Size, Subscription, Task, Theme,
     widget::{button, column, container, row, scrollable, text},
 };
 use std::sync::{Arc, Mutex, mpsc};
@@ -35,6 +36,8 @@ pub struct PokeEditorApp {
     #[allow(dead_code)]
     command_sender: Arc<CommandSender>,
     latest_preview: Option<PreviewFrame>,
+    preview_window_id: Option<window::Id>,
+    main_window_id: Option<window::Id>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +47,7 @@ pub enum Message {
     PartyInfoReceived(Vec<PokemonUsageSummary>),
     Save,
     RuntimeMsg(RuntimeMessage),
+    WindowClosed(window::Id),
 }
 
 impl PokeEditorApp {
@@ -66,6 +70,22 @@ impl PokeEditorApp {
             _ => std::array::from_fn(|i| PokemonState::new(format!("poke{}", i + 1))),
         };
 
+        let (main_id, main_task) = window::open(window::Settings {
+            size: Size {
+                width: 1200.0,
+                height: 800.0,
+            },
+            ..Default::default()
+        });
+
+        let (preview_id, preview_task) = window::open(window::Settings {
+            size: Size {
+                width: 960.0,
+                height: 540.0,
+            },
+            ..Default::default()
+        });
+
         (
             Self {
                 pokemons,
@@ -76,8 +96,10 @@ impl PokeEditorApp {
                 party_repo,
                 command_sender,
                 latest_preview: None,
+                preview_window_id: Some(preview_id),
+                main_window_id: Some(main_id),
             },
-            Task::none(),
+            Task::batch([main_task.discard(), preview_task.discard()]),
         )
     }
 
@@ -112,6 +134,13 @@ impl PokeEditorApp {
                     self.handle_runtime_event(event);
                 }
             },
+            Message::WindowClosed(id) => {
+                if self.preview_window_id == Some(id) {
+                    self.preview_window_id = None;
+                } else if self.main_window_id == Some(id) {
+                    return iced::exit();
+                }
+            }
         }
         Task::none()
     }
@@ -194,10 +223,16 @@ impl PokeEditorApp {
             })
         };
 
-        Subscription::batch([preview_sub, event_sub, party_info_sub])
+        let close_sub = window::close_events().map(Message::WindowClosed);
+
+        Subscription::batch([preview_sub, event_sub, party_info_sub, close_sub])
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    pub fn view(&self, id: window::Id) -> Element<'_, Message> {
+        if self.preview_window_id == Some(id) {
+            return self.preview_view();
+        }
+
         let tab_bar = row![
             button(text("パーティ編集").font(JAPANESE_FONT))
                 .on_press(Message::TabSelected(Tab::Editor))
@@ -208,43 +243,30 @@ impl PokeEditorApp {
         ]
         .spacing(10);
 
-        let right_content = match self.active_tab {
+        let content = match self.active_tab {
             Tab::Editor => self.editor_view(),
             Tab::SelectionSupport => self.selection_support_view(),
         };
 
-        let right_panel = column![tab_bar, right_content].spacing(20);
-
-        let left_panel = self.preview_view();
-
-        let layout = row![
-            container(left_panel)
-                .width(Length::FillPortion(1))
-                .height(Length::Fill),
-            container(right_panel)
-                .width(Length::FillPortion(2))
-                .height(Length::Fill),
-        ]
-        .spacing(20);
-
-        container(layout)
-            .padding(20)
+        container(column![tab_bar, content].spacing(20).padding(20))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
     }
 
+    pub fn title(&self, id: window::Id) -> String {
+        if self.preview_window_id == Some(id) {
+            "Camera Preview".to_string()
+        } else {
+            "Pokemon Editor".to_string()
+        }
+    }
+
     fn preview_view(&self) -> Element<'_, Message> {
-        container(
-            column![
-                text("カメラプレビュー").font(JAPANESE_FONT).size(32),
-                VideoPreview::view(self.latest_preview.as_ref()),
-            ]
-            .spacing(20),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        container(VideoPreview::view(self.latest_preview.as_ref()))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 
     fn editor_view(&self) -> Element<'_, Message> {

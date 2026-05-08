@@ -101,7 +101,7 @@ fn main() -> iced::Result {
     let party_repo_for_ui = party_repo.clone();
     let command_sender_for_ui = command_sender.clone();
 
-    iced::application(
+    iced::daemon(
         move || {
             PokeEditorApp::new(
                 info_rx_for_ui.clone(),
@@ -114,15 +114,7 @@ fn main() -> iced::Result {
         PokeEditorApp::view,
     )
     .subscription(PokeEditorApp::subscription)
-    .title("Pokemon Editor")
-    .window(iced::window::Settings {
-        size: Size {
-            width: 1600.0,
-            height: 900.0,
-        },
-        exit_on_close_request: true,
-        ..Default::default()
-    })
+    .title(PokeEditorApp::title)
     .font(include_bytes!(
         "../../../assets/fonts/NotoSansJP-Regular.ttf"
     ))
