@@ -27,3 +27,17 @@ target
 /master_data
 /models
 capture.png
+
+# Runtime data directories (contents are user-specific)
+/user_data/*
+!/user_data/.gitkeep
+/cache/*
+!/cache/.gitkeep
+
+# Resources (large binary assets populated at runtime)
+/resources/master_data/*
+!/resources/master_data/.gitkeep
+/resources/models/*
+!/resources/models/.gitkeep
+/resources/pokemon_images/*
+!/resources/pokemon_images/.gitkeep

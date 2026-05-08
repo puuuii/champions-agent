@@ -1,0 +1,20 @@
+[package]
+name = "champions-agent-desktop"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "champions-agent"
+path = "src/main.rs"
+
+[dependencies]
+champions-domain = { path = "../../crates/champions-domain" }
+champions-application = { path = "../../crates/champions-application" }
+champions-infrastructure = { path = "../../crates/champions-infrastructure" }
+champions-runtime = { path = "../../crates/champions-runtime" }
+champions-interface = { path = "../../crates/champions-interface" }
+
+anyhow.workspace = true
+opencv = { version = "0.98.2", features = ["videoio"] }
+iced = { version = "0.14", features = ["tokio", "image"] }
+tokio = { version = "1.52.2", features = ["full"] }

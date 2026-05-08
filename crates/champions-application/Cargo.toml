@@ -1,0 +1,8 @@
+[package]
+name = "champions-application"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+champions-domain = { path = "../champions-domain" }
+thiserror.workspace = true
