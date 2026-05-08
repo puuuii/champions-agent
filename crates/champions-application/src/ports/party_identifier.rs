@@ -32,14 +32,7 @@ pub struct RecognitionConfig {
 
 impl Default for RecognitionConfig {
     fn default() -> Self {
-<<<<<<< HEAD
-        Self {
-            min_confidence: 0.5,
-            top_candidates: 3,
-        }
-=======
         Self { top_candidates: 3 }
->>>>>>> rearchitect
     }
 }
 
