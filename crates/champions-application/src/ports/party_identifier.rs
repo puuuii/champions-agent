@@ -27,16 +27,23 @@ pub struct PartyImageSet {
 
 #[derive(Debug, Clone)]
 pub struct RecognitionConfig {
+<<<<<<< HEAD
     pub min_confidence: f32,
+=======
+>>>>>>> rearchitect
     pub top_candidates: usize,
 }
 
 impl Default for RecognitionConfig {
     fn default() -> Self {
+<<<<<<< HEAD
         Self {
             min_confidence: 0.5,
             top_candidates: 3,
         }
+=======
+        Self { top_candidates: 3 }
+>>>>>>> rearchitect
     }
 }
 
