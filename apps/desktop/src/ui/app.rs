@@ -10,8 +10,7 @@ use champions_application::use_cases::{
 };
 use champions_domain::party::SavedParty;
 use champions_interface::{
-    ConfidenceView, ConflictView, OpponentPartyView, PreviewFrame, RecognizedPokemonView,
-    RuntimeEvent,
+    ConflictView, OpponentPartyView, PreviewFrame, RecognizedPokemonView, RuntimeEvent,
 };
 use champions_runtime::CommandSender;
 use iced::window;
@@ -505,10 +504,7 @@ fn format_slot_name(pokemon: &RecognizedPokemonView) -> String {
         .or(pokemon.display_name.as_deref())
         .unwrap_or("未判定");
 
-    let mut lines = vec![
-        format!("#{} {}", pokemon.slot_index + 1, display_name),
-        format_confidence(&pokemon.confidence),
-    ];
+    let mut lines = vec![format!("#{} {}", pokemon.slot_index + 1, display_name)];
 
     if pokemon.usage.is_none() {
         if let Some(candidates) = format_candidate_summary(pokemon) {
@@ -519,29 +515,9 @@ fn format_slot_name(pokemon: &RecognizedPokemonView) -> String {
     lines.join("\n")
 }
 
-fn format_confidence(confidence: &ConfidenceView) -> String {
-    match confidence {
-        ConfidenceView::High(score) => format!("一致度: 高 {:.1}%", score * 100.0),
-        ConfidenceView::Medium(score) => format!("一致度: 中 {:.1}%", score * 100.0),
-        ConfidenceView::Low(score) => format!("一致度: 低 {:.1}%", score * 100.0),
-        ConfidenceView::Unknown => "一致度: 不明".to_string(),
-    }
-}
-
 fn format_candidate_summary(pokemon: &RecognizedPokemonView) -> Option<String> {
-    if pokemon.candidates.is_empty() {
-        return None;
-    }
-
-    let candidates = pokemon
-        .candidates
-        .iter()
-        .take(3)
-        .map(|candidate| format!("{} {:.1}%", candidate.display_name, candidate.score * 100.0))
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    Some(format!("候補: {candidates}"))
+    let candidate = pokemon.candidates.first()?;
+    Some(format!("候補: {}", candidate.display_name))
 }
 
 fn format_conflict_summary(conflicts: &[ConflictView]) -> Option<String> {
