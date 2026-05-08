@@ -21,46 +21,52 @@ pub fn init_receivers(preview: Arc<Mutex<PreviewReceiver>>, event: Arc<Mutex<Eve
 
 pub fn preview_subscription() -> Subscription<RuntimeMessage> {
     Subscription::run(|| {
-        iced::stream::channel(2, |mut output: iced::futures::channel::mpsc::Sender<RuntimeMessage>| async move {
-            let receiver = PREVIEW_RECEIVER
-                .get()
-                .expect("preview receiver not initialized")
-                .clone();
-            loop {
-                let frame = {
-                    let mut rx = receiver.lock().await;
-                    rx.next().await
-                };
-                match frame {
-                    Some(f) => {
-                        let _ = output.send(RuntimeMessage::PreviewFrameReceived(f)).await;
+        iced::stream::channel(
+            2,
+            |mut output: iced::futures::channel::mpsc::Sender<RuntimeMessage>| async move {
+                let receiver = PREVIEW_RECEIVER
+                    .get()
+                    .expect("preview receiver not initialized")
+                    .clone();
+                loop {
+                    let frame = {
+                        let mut rx = receiver.lock().await;
+                        rx.next().await
+                    };
+                    match frame {
+                        Some(f) => {
+                            let _ = output.send(RuntimeMessage::PreviewFrameReceived(f)).await;
+                        }
+                        None => break,
                     }
-                    None => break,
                 }
-            }
-        })
+            },
+        )
     })
 }
 
 pub fn event_subscription() -> Subscription<RuntimeMessage> {
     Subscription::run(|| {
-        iced::stream::channel(64, |mut output: iced::futures::channel::mpsc::Sender<RuntimeMessage>| async move {
-            let receiver = EVENT_RECEIVER
-                .get()
-                .expect("event receiver not initialized")
-                .clone();
-            loop {
-                let event = {
-                    let mut rx = receiver.lock().await;
-                    rx.next().await
-                };
-                match event {
-                    Some(e) => {
-                        let _ = output.send(RuntimeMessage::RuntimeEventReceived(e)).await;
+        iced::stream::channel(
+            64,
+            |mut output: iced::futures::channel::mpsc::Sender<RuntimeMessage>| async move {
+                let receiver = EVENT_RECEIVER
+                    .get()
+                    .expect("event receiver not initialized")
+                    .clone();
+                loop {
+                    let event = {
+                        let mut rx = receiver.lock().await;
+                        rx.next().await
+                    };
+                    match event {
+                        Some(e) => {
+                            let _ = output.send(RuntimeMessage::RuntimeEventReceived(e)).await;
+                        }
+                        None => break,
                     }
-                    None => break,
                 }
-            }
-        })
+            },
+        )
     })
 }

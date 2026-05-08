@@ -4,6 +4,7 @@ use champions_application::use_cases::*;
 use champions_domain::battle::DamageInput;
 use champions_domain::catalog::{BattleMasterData, MoveData, NatureData};
 use champions_domain::party::{PokemonBuild, SavedParty};
+use champions_domain::recognition::ScreenState;
 use champions_domain::usage::{MoveUsage, PokemonUsageSummary};
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -171,6 +172,22 @@ impl UsageFetcher for FakeUsageFetcher {
     }
 }
 
+struct FakeOcrEngine {
+    text: String,
+}
+
+impl FakeOcrEngine {
+    fn new(text: impl Into<String>) -> Self {
+        Self { text: text.into() }
+    }
+}
+
+impl OcrEngine for FakeOcrEngine {
+    fn recognize_selection_text(&self, _image: &OcrImage) -> Result<String, OcrError> {
+        Ok(self.text.clone())
+    }
+}
+
 // --- Helpers ---
 
 fn fixture_master_data() -> BattleMasterData {
@@ -217,6 +234,7 @@ fn fixture_master_data() -> BattleMasterData {
 
 fn sample_usage(name: &str) -> PokemonUsageSummary {
     PokemonUsageSummary {
+        id: name.to_string(),
         name: name.to_string(),
         types: vec!["でんき".to_string()],
         moves: vec![MoveUsage {
@@ -233,6 +251,14 @@ fn sample_pokemon(name: &str) -> PokemonBuild {
     PokemonBuild {
         species_name: name.to_string(),
         ..Default::default()
+    }
+}
+
+fn sample_ocr_image() -> OcrImage {
+    OcrImage {
+        width: 1,
+        height: 1,
+        rgb_bytes: vec![255, 255, 255],
     }
 }
 
@@ -447,4 +473,34 @@ fn get_pokemon_usage_returns_none_when_not_found() {
         .unwrap();
 
     assert!(result.usage.is_none());
+}
+
+// --- DetectSelectionScreenUseCase Tests ---
+
+#[test]
+fn detect_selection_screen_accepts_single_battle_header() {
+    let ocr = FakeOcrEngine::new("ランクマッチ\nシングル\nバトル");
+    let uc = DetectSelectionScreenUseCase::new(&ocr);
+
+    let result = uc
+        .execute(DetectSelectionScreenCommand {
+            target_text_image: sample_ocr_image(),
+        })
+        .unwrap();
+
+    assert_eq!(result.screen_state, ScreenState::SelectionScreen);
+}
+
+#[test]
+fn detect_selection_screen_rejects_text_without_single_battle_header() {
+    let ocr = FakeOcrEngine::new("ポケモンを選出してください");
+    let uc = DetectSelectionScreenUseCase::new(&ocr);
+
+    let result = uc
+        .execute(DetectSelectionScreenCommand {
+            target_text_image: sample_ocr_image(),
+        })
+        .unwrap();
+
+    assert_eq!(result.screen_state, ScreenState::Other);
 }

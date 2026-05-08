@@ -1,11 +1,10 @@
-use champions_domain::usage::PokemonUsageSummary;
 use champions_infrastructure::RgbaPreviewConverter;
 use champions_infrastructure::config::AppPaths;
 use champions_infrastructure::persistence::{
     CsvCatalogRepository, JsonPartyRepository, JsonUsageRepository,
 };
 use champions_infrastructure::{
-    MangaOcrEngine, OnnxPartyIdentifier, OpenCvCropper, RecognitionAdapter, GameWithUsageFetcher,
+    GameWithUsageFetcher, MangaOcrEngine, OnnxPartyIdentifier, OpenCvCropper, RecognitionAdapter,
 };
 use champions_runtime::RuntimeBuilder;
 use iced::Size;
@@ -78,10 +77,6 @@ fn main() -> iced::Result {
     // Initialize static receivers for Iced subscriptions
     ui::subscriptions::init_receivers(preview_receiver.clone(), event_receiver.clone());
 
-    // --- info channel for legacy UI compatibility ---
-    let (_info_tx, info_rx) = std::sync::mpsc::channel::<Vec<PokemonUsageSummary>>();
-    let info_rx = Arc::new(std::sync::Mutex::new(info_rx));
-
     // --- Spawn runtime workers ---
     let command_sender_for_start = command_sender.clone();
     std::thread::spawn(move || {
@@ -99,7 +94,6 @@ fn main() -> iced::Result {
     });
 
     // --- Main thread (UI) ---
-    let info_rx_for_ui = info_rx.clone();
     let catalog_repo_for_ui = catalog_repo.clone();
     let party_repo_for_ui = party_repo.clone();
     let command_sender_for_ui = command_sender.clone();
@@ -109,7 +103,6 @@ fn main() -> iced::Result {
     iced::daemon(
         move || {
             PokeEditorApp::new(
-                info_rx_for_ui.clone(),
                 catalog_repo_for_ui.clone(),
                 party_repo_for_ui.clone(),
                 command_sender_for_ui.clone(),

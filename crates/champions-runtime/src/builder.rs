@@ -1,10 +1,12 @@
-use std::time::Instant;
+use std::{collections::HashMap, time::Instant};
 
 use tokio::sync::mpsc;
 
 use champions_interface::{
-    CandidateView, ConfidenceView, ConflictView, EventSequence, FrameSequence, OpponentPartyView,
-    PreviewFrame, RecognitionAttemptId, RecognizedPokemonView, RuntimeCommand, RuntimeEvent,
+    CandidateView, ConfidenceView, ConflictView, EffortValueUsageView, EventSequence,
+    FrameSequence, ItemUsageView, MoveUsageView, NatureUsageView, OpponentPartyView,
+    PokemonUsageSummaryView, PreviewFrame, RecognitionAttemptId, RecognizedPokemonView,
+    RuntimeCommand, RuntimeEvent,
 };
 
 use crate::handle::RuntimeHandle;
@@ -364,7 +366,13 @@ fn map_to_opponent_party_view(
 ) -> OpponentPartyView {
     use champions_domain::recognition::ConfidenceScore;
 
-    let pokemons = result
+    let usage_by_name: HashMap<&str, &champions_domain::usage::PokemonUsageSummary> = result
+        .usage_summaries
+        .iter()
+        .map(|usage| (usage.name.as_str(), usage))
+        .collect();
+
+    let mut pokemons: Vec<_> = result
         .recognized_party
         .pokemons
         .iter()
@@ -385,8 +393,14 @@ fn map_to_opponent_party_view(
                     score: c.score,
                 })
                 .collect(),
+            usage: p
+                .display_name
+                .as_deref()
+                .and_then(|name| usage_by_name.get(name).copied())
+                .map(map_usage_summary_view),
         })
         .collect();
+    pokemons.sort_by_key(|pokemon| pokemon.slot_index);
 
     let conflicts = result
         .conflicts
@@ -400,5 +414,132 @@ fn map_to_opponent_party_view(
     OpponentPartyView {
         pokemons,
         conflicts,
+    }
+}
+
+fn map_usage_summary_view(
+    usage: &champions_domain::usage::PokemonUsageSummary,
+) -> PokemonUsageSummaryView {
+    PokemonUsageSummaryView {
+        name: usage.name.clone(),
+        types: usage.types.clone(),
+        moves: usage
+            .moves
+            .iter()
+            .map(|m| MoveUsageView {
+                name: m.name.clone(),
+                rate: m.rate.clone(),
+            })
+            .collect(),
+        items: usage
+            .items
+            .iter()
+            .map(|i| ItemUsageView {
+                name: i.name.clone(),
+                rate: i.rate.clone(),
+            })
+            .collect(),
+        effort_values: usage
+            .effort_values
+            .iter()
+            .map(|ev| EffortValueUsageView {
+                h: ev.h,
+                a: ev.a,
+                b: ev.b,
+                c: ev.c,
+                d: ev.d,
+                s: ev.s,
+                rate: ev.rate.clone(),
+            })
+            .collect(),
+        natures: usage
+            .natures
+            .iter()
+            .map(|n| NatureUsageView {
+                name: n.name.clone(),
+                rate: n.rate.clone(),
+            })
+            .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_to_opponent_party_view;
+    use champions_application::use_cases::OpponentPartyIdentificationResult;
+    use champions_domain::recognition::{
+        ConfidenceScore, RecognizedParty, RecognizedPokemon, SelectionSlot,
+    };
+    use champions_domain::usage::{
+        EffortValueUsage, ItemUsage, MoveUsage, NatureUsage, PokemonUsageSummary,
+    };
+
+    #[test]
+    fn map_to_opponent_party_view_attaches_usage_by_recognized_name() {
+        let result = OpponentPartyIdentificationResult {
+            recognized_party: RecognizedParty {
+                pokemons: vec![
+                    RecognizedPokemon {
+                        slot: SelectionSlot(3),
+                        species_id: None,
+                        display_name: Some("ピカチュウ".to_string()),
+                        confidence: ConfidenceScore::High(0.97),
+                        candidates: vec![],
+                    },
+                    RecognizedPokemon {
+                        slot: SelectionSlot(1),
+                        species_id: None,
+                        display_name: None,
+                        confidence: ConfidenceScore::Unknown,
+                        candidates: vec![],
+                    },
+                ],
+            },
+            usage_summaries: vec![sample_usage("ピカチュウ")],
+            conflicts: vec![],
+        };
+
+        let view = map_to_opponent_party_view(&result);
+
+        assert_eq!(view.pokemons.len(), 2);
+        assert_eq!(view.pokemons[0].slot_index, 1);
+        assert!(view.pokemons[0].usage.is_none());
+        assert_eq!(view.pokemons[1].slot_index, 3);
+        assert_eq!(
+            view.pokemons[1]
+                .usage
+                .as_ref()
+                .map(|usage| usage.name.as_str()),
+            Some("ピカチュウ")
+        );
+    }
+
+    fn sample_usage(name: &str) -> PokemonUsageSummary {
+        PokemonUsageSummary {
+            id: name.to_string(),
+            name: name.to_string(),
+            types: vec!["でんき".to_string()],
+            moves: vec![MoveUsage {
+                name: "10まんボルト".to_string(),
+                rate: "80%".to_string(),
+            }],
+            items: vec![ItemUsage {
+                name: "きあいのタスキ".to_string(),
+                rate: "35%".to_string(),
+            }],
+            effort_values: vec![EffortValueUsage {
+                h: 0,
+                a: 0,
+                b: 0,
+                c: 252,
+                d: 4,
+                s: 252,
+                rate: "52%".to_string(),
+            }],
+            natures: vec![NatureUsage {
+                name: "おくびょう".to_string(),
+                rate: "61%".to_string(),
+            }],
+        }
     }
 }

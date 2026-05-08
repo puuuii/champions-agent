@@ -1,7 +1,7 @@
 """
-usage.json から img_url を取得し、
-master_data/pokemon_images/<name>.png としてダウンロードするスクリプト
-RGBA画像は白背景で合成して非透過PNGとして保存する
+usage.json から画像URLを取得し、
+resources/pokemon_images/<name>.png としてダウンロードするスクリプト。
+RGBA画像は白背景で合成して非透過PNGとして保存する。
 """
 
 import json
@@ -14,7 +14,7 @@ from pathlib import Path
 from PIL import Image
 
 INPUT_JSON = "cache/usage.json"
-OUTPUT_DIR = Path("master_data/pokemon_images")
+OUTPUT_DIR = Path("resources/pokemon_images")
 DELAY_SEC = 0.5  # サーバー負荷軽減のためのウェイト
 
 

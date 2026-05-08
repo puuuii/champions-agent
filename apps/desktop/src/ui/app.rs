@@ -9,16 +9,17 @@ use champions_application::use_cases::{
     SavePartyUseCase, SuggestKind, SuggestNamesQuery, SuggestNamesUseCase,
 };
 use champions_domain::party::SavedParty;
-use champions_domain::usage::PokemonUsageSummary;
-use champions_interface::{PreviewFrame, RuntimeEvent};
+use champions_interface::{
+    ConfidenceView, ConflictView, OpponentPartyView, PreviewFrame, RecognizedPokemonView,
+    RuntimeEvent,
+};
 use champions_runtime::CommandSender;
-use iced::futures::SinkExt;
 use iced::window;
 use iced::{
-    Element, Length, Size, Subscription, Task, Theme,
+    Element, Length, Size, Subscription, Task,
     widget::{button, column, container, row, scrollable, text},
 };
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::Arc;
 
 use super::JAPANESE_FONT;
 
@@ -31,8 +32,7 @@ pub enum Tab {
 pub struct PokeEditorApp {
     pokemons: [PokemonState; 6],
     active_tab: Tab,
-    opponent_party: Option<Vec<PokemonUsageSummary>>,
-    info_receiver: Arc<Mutex<mpsc::Receiver<Vec<PokemonUsageSummary>>>>,
+    opponent_party: Option<OpponentPartyView>,
     catalog_repo: Arc<dyn CatalogRepository>,
     party_repo: Arc<dyn PartyRepository>,
     #[allow(dead_code)]
@@ -51,7 +51,6 @@ pub struct PokeEditorApp {
 pub enum Message {
     PokemonMsg(usize, super::pokemon::Message),
     TabSelected(Tab),
-    PartyInfoReceived(Vec<PokemonUsageSummary>),
     Save,
     RuntimeMsg(RuntimeMessage),
     WindowClosed(window::Id),
@@ -63,7 +62,6 @@ pub enum Message {
 
 impl PokeEditorApp {
     pub fn new(
-        info_receiver: Arc<Mutex<mpsc::Receiver<Vec<PokemonUsageSummary>>>>,
         catalog_repo: Arc<dyn CatalogRepository>,
         party_repo: Arc<dyn PartyRepository>,
         command_sender: Arc<CommandSender>,
@@ -104,7 +102,6 @@ impl PokeEditorApp {
                 pokemons,
                 active_tab: Tab::Editor,
                 opponent_party: None,
-                info_receiver,
                 catalog_repo,
                 party_repo,
                 command_sender,
@@ -129,9 +126,6 @@ impl PokeEditorApp {
             }
             Message::TabSelected(tab) => {
                 self.active_tab = tab;
-            }
-            Message::PartyInfoReceived(party) => {
-                self.opponent_party = Some(party);
             }
             Message::Save => {
                 let saved_party = SavedParty {
@@ -200,6 +194,10 @@ impl PokeEditorApp {
 
     fn handle_runtime_event(&mut self, event: RuntimeEvent) {
         match event {
+            RuntimeEvent::OpponentPartyRecognized { party, .. } => {
+                self.opponent_party = Some(party);
+                self.active_tab = Tab::SelectionSupport;
+            }
             RuntimeEvent::RuntimeStopped { .. } => {
                 println!("[Runtime] stopped");
             }
@@ -245,40 +243,9 @@ impl PokeEditorApp {
         let preview_sub = subscriptions::preview_subscription().map(Message::RuntimeMsg);
         let event_sub = subscriptions::event_subscription().map(Message::RuntimeMsg);
 
-        let party_info_sub = {
-            static RECEIVER: std::sync::OnceLock<
-                Arc<Mutex<mpsc::Receiver<Vec<PokemonUsageSummary>>>>,
-            > = std::sync::OnceLock::new();
-            let _ = RECEIVER.set(self.info_receiver.clone());
-
-            iced::Subscription::run(|| {
-                iced::stream::channel::<Message>(
-                    100,
-                    |mut output: iced::futures::channel::mpsc::Sender<Message>| {
-                        let receiver = RECEIVER.get().unwrap().clone();
-                        async move {
-                            loop {
-                                let receiver = receiver.clone();
-                                let result = tokio::task::spawn_blocking(move || {
-                                    receiver.lock().unwrap().recv().ok()
-                                })
-                                .await;
-
-                                if let Ok(Some(party)) = result {
-                                    let _ = output.send(Message::PartyInfoReceived(party)).await;
-                                } else {
-                                    break;
-                                }
-                            }
-                        }
-                    },
-                )
-            })
-        };
-
         let close_sub = window::close_events().map(Message::WindowClosed);
 
-        Subscription::batch([preview_sub, event_sub, party_info_sub, close_sub])
+        Subscription::batch([preview_sub, event_sub, close_sub])
     }
 
     pub fn view(&self, id: window::Id) -> Element<'_, Message> {
@@ -352,7 +319,6 @@ impl PokeEditorApp {
     }
 
     fn selection_support_view(&self) -> Element<'_, Message> {
-        // --- 新規追加: 更新ボタンの設定 ---
         let refresh_btn = button(
             text(if self.is_refreshing {
                 "更新中..."
@@ -377,10 +343,16 @@ impl PokeEditorApp {
         .align_y(iced::Alignment::Center);
 
         let content: Element<'_, Message> = match &self.opponent_party {
-            None => text::<Theme, iced::Renderer>("ポケモン選出画面を待機中...")
+            None => text("ポケモン選出画面を待機中...")
                 .size(20)
                 .font(JAPANESE_FONT)
                 .into(),
+            Some(party) if party.pokemons.is_empty() => {
+                text("選出画面は検出されましたが、相手パーティをまだ判定できていません。")
+                    .size(20)
+                    .font(JAPANESE_FONT)
+                    .into()
+            }
             Some(party) => {
                 let mut name_row = row![
                     container(text("名前").font(JAPANESE_FONT).size(16)).width(Length::Fixed(80.0))
@@ -410,68 +382,186 @@ impl PokeEditorApp {
                 ]
                 .spacing(10);
 
-                for p in party {
+                for pokemon in &party.pokemons {
+                    let usage = pokemon.usage.as_ref();
                     name_row = name_row.push(
-                        container(text(&p.name).font(JAPANESE_FONT).size(20))
+                        container(text(format_slot_name(pokemon)).font(JAPANESE_FONT).size(16))
                             .width(Length::FillPortion(1)),
                     );
                     type_row = type_row.push(
-                        container(text(p.types.join(", ")).font(JAPANESE_FONT).size(14))
-                            .width(Length::FillPortion(1)),
+                        container(
+                            text(
+                                usage
+                                    .map(|usage| {
+                                        if usage.types.is_empty() {
+                                            "-".to_string()
+                                        } else {
+                                            usage.types.join(", ")
+                                        }
+                                    })
+                                    .unwrap_or_else(|| "使用率データなし".to_string()),
+                            )
+                            .font(JAPANESE_FONT)
+                            .size(14),
+                        )
+                        .width(Length::FillPortion(1)),
                     );
+
                     let mut moves_col = column![].spacing(2);
-                    for m in p.moves.iter().take(8) {
-                        moves_col = moves_col.push(
-                            text(format!("{} ({})", m.name, m.rate))
-                                .font(JAPANESE_FONT)
-                                .size(12),
-                        );
+                    if let Some(usage) = usage {
+                        for m in usage.moves.iter().take(8) {
+                            moves_col = moves_col.push(
+                                text(format!("{} ({})", m.name, m.rate))
+                                    .font(JAPANESE_FONT)
+                                    .size(12),
+                            );
+                        }
+                    } else {
+                        moves_col =
+                            moves_col.push(text("使用率データなし").font(JAPANESE_FONT).size(12));
                     }
                     move_row = move_row.push(container(moves_col).width(Length::FillPortion(1)));
+
                     let mut items_col = column![].spacing(2);
-                    for i in p.items.iter().take(3) {
-                        items_col = items_col.push(
-                            text(format!("{} ({})", i.name, i.rate))
-                                .font(JAPANESE_FONT)
-                                .size(12),
-                        );
+                    if let Some(usage) = usage {
+                        for i in usage.items.iter().take(3) {
+                            items_col = items_col.push(
+                                text(format!("{} ({})", i.name, i.rate))
+                                    .font(JAPANESE_FONT)
+                                    .size(12),
+                            );
+                        }
+                    } else {
+                        items_col =
+                            items_col.push(text("使用率データなし").font(JAPANESE_FONT).size(12));
                     }
                     item_row = item_row.push(container(items_col).width(Length::FillPortion(1)));
+
                     let mut evs_col = column![].spacing(2);
-                    for e in p.effort_values.iter().take(3) {
-                        evs_col = evs_col.push(
-                            text(format!(
-                                "H{} A{} B{} C{} D{} S{}\n({})",
-                                e.h, e.a, e.b, e.c, e.d, e.s, e.rate
-                            ))
-                            .font(JAPANESE_FONT)
-                            .size(12),
-                        );
-                    }
-                    ev_row = ev_row.push(container(evs_col).width(Length::FillPortion(1)));
-                    let mut natures_col = column![].spacing(2);
-                    for n in p.natures.iter().take(2) {
-                        natures_col = natures_col.push(
-                            text(format!("{} ({})", n.name, n.rate))
+                    if let Some(usage) = usage {
+                        for e in usage.effort_values.iter().take(3) {
+                            evs_col = evs_col.push(
+                                text(format!(
+                                    "H{} A{} B{} C{} D{} S{}\n({})",
+                                    e.h, e.a, e.b, e.c, e.d, e.s, e.rate
+                                ))
                                 .font(JAPANESE_FONT)
                                 .size(12),
-                        );
+                            );
+                        }
+                    } else {
+                        evs_col =
+                            evs_col.push(text("使用率データなし").font(JAPANESE_FONT).size(12));
+                    }
+                    ev_row = ev_row.push(container(evs_col).width(Length::FillPortion(1)));
+
+                    let mut natures_col = column![].spacing(2);
+                    if let Some(usage) = usage {
+                        for n in usage.natures.iter().take(2) {
+                            natures_col = natures_col.push(
+                                text(format!("{} ({})", n.name, n.rate))
+                                    .font(JAPANESE_FONT)
+                                    .size(12),
+                            );
+                        }
+                    } else {
+                        natures_col =
+                            natures_col.push(text("使用率データなし").font(JAPANESE_FONT).size(12));
                     }
                     nature_row =
                         nature_row.push(container(natures_col).width(Length::FillPortion(1)));
                 }
 
+                let mut content = column![].spacing(20);
+                if let Some(conflict_summary) = format_conflict_summary(&party.conflicts) {
+                    content = content.push(
+                        container(text(conflict_summary).font(JAPANESE_FONT).size(14))
+                            .padding(10)
+                            .width(Length::Fill),
+                    );
+                }
+
                 let table =
                     column![name_row, type_row, move_row, item_row, ev_row, nature_row].spacing(20);
-                scrollable(table).into()
+                content = content.push(table);
+
+                scrollable(content).into()
             }
         };
 
-        // --- 画面上部に header_row(更新ボタンを含む)を適用 ---
         container(column![header_row, content].spacing(20))
             .padding(20)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
     }
+}
+
+fn format_slot_name(pokemon: &RecognizedPokemonView) -> String {
+    let display_name = pokemon
+        .usage
+        .as_ref()
+        .map(|usage| usage.name.as_str())
+        .or(pokemon.display_name.as_deref())
+        .unwrap_or("未判定");
+
+    let mut lines = vec![
+        format!("#{} {}", pokemon.slot_index + 1, display_name),
+        format_confidence(&pokemon.confidence),
+    ];
+
+    if pokemon.usage.is_none() {
+        if let Some(candidates) = format_candidate_summary(pokemon) {
+            lines.push(candidates);
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn format_confidence(confidence: &ConfidenceView) -> String {
+    match confidence {
+        ConfidenceView::High(score) => format!("一致度: 高 {:.1}%", score * 100.0),
+        ConfidenceView::Medium(score) => format!("一致度: 中 {:.1}%", score * 100.0),
+        ConfidenceView::Low(score) => format!("一致度: 低 {:.1}%", score * 100.0),
+        ConfidenceView::Unknown => "一致度: 不明".to_string(),
+    }
+}
+
+fn format_candidate_summary(pokemon: &RecognizedPokemonView) -> Option<String> {
+    if pokemon.candidates.is_empty() {
+        return None;
+    }
+
+    let candidates = pokemon
+        .candidates
+        .iter()
+        .take(3)
+        .map(|candidate| format!("{} {:.1}%", candidate.display_name, candidate.score * 100.0))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    Some(format!("候補: {candidates}"))
+}
+
+fn format_conflict_summary(conflicts: &[ConflictView]) -> Option<String> {
+    if conflicts.is_empty() {
+        return None;
+    }
+
+    let body = conflicts
+        .iter()
+        .map(|conflict| {
+            let slots = conflict
+                .slot_indices
+                .iter()
+                .map(|slot| format!("#{}", slot + 1))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{} -> {}", conflict.species_name, slots)
+        })
+        .collect::<Vec<_>>()
+        .join(" / ");
+
+    Some(format!("重複候補があります: {body}"))
 }
