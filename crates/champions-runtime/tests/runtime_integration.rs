@@ -46,7 +46,7 @@ async fn capture_produces_preview_frames() {
     let (mut handle, workers) = RuntimeBuilder::new()
         .frame_source(Box::new(source))
         .preview_converter(Box::new(converter))
-        .preview_target_fps(30)
+        .preview_target_fps(60)
         .build();
 
     let worker_task = tokio::spawn(async move {
