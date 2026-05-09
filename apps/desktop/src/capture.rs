@@ -4,7 +4,7 @@ use champions_infrastructure::capture::{
 use champions_interface::FrameSequence;
 use champions_runtime::{CaptureError, CapturedFrame, FrameSource, ImageBuffer, PixelFormat};
 
-pub use champions_infrastructure::capture::{CaptureBackend, CaptureConfig};
+pub use champions_infrastructure::capture::CaptureConfig;
 
 pub struct OpenCvFrameSource {
     device: OpenCvCaptureDevice,

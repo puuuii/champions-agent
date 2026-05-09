@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FrameSequence(pub u64);
 
@@ -8,7 +10,6 @@ pub struct EventSequence(pub u64);
 pub struct RecognitionAttemptId(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-<<<<<<< HEAD
 pub struct ImagePoint {
     pub x: u32,
     pub y: u32,
@@ -28,7 +29,9 @@ pub struct RgbaColor {
     pub g: u8,
     pub b: u8,
     pub a: u8,
-=======
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PixelFormat {
     Bgr8,
     Rgb8,
@@ -68,7 +71,6 @@ pub struct PreviewFrame {
     pub width: u32,
     pub height: u32,
     pub rgba: Arc<[u8]>,
->>>>>>> 6
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

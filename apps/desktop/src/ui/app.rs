@@ -6,10 +6,6 @@ use champions_domain::party::SavedParty;
 use champions_interface::{
     ConflictView, OpponentPartyView, PokemonUsageSummaryView, RecognizedPokemonView, RuntimeEvent,
 };
-<<<<<<< HEAD
-use champions_runtime::{CommandSender, PreviewFrame};
-=======
->>>>>>> 5
 use iced::window;
 use iced::{
     Border, Color, Element, Length, Size, Subscription, Task,

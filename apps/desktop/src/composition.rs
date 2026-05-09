@@ -1,4 +1,5 @@
 use crate::capture::{CaptureConfig, OpenCvFrameSource};
+use crate::recognition::RecognitionRuntimePort;
 use crate::services::DesktopAppServices;
 use crate::ui::{self, app::PokeEditorApp};
 use anyhow::Result;
@@ -9,11 +10,10 @@ use champions_infrastructure::config::AppPaths;
 use champions_infrastructure::persistence::{
     CsvCatalogRepository, JsonPartyRepository, JsonUsageRepository,
 };
-use champions_infrastructure::{
-    GameWithUsageFetcher, MangaOcrEngine, OnnxPartyIdentifier, OpenCvCropper, RecognitionAdapter,
-    RgbaPreviewConverter,
+use champions_infrastructure::{GameWithUsageFetcher, MangaOcrEngine, OnnxPartyIdentifier, OpenCvCropper};
+use champions_runtime::{
+    CommandSender, RecognitionPort, RgbaPreviewConverter, RuntimeBuilder, RuntimeWorkers,
 };
-use champions_runtime::{CommandSender, RecognitionPort, RuntimeBuilder, RuntimeWorkers};
 use std::sync::Arc;
 
 pub fn run() -> iced::Result {
@@ -153,7 +153,7 @@ fn build_recognition_port(
 
     let cropper = OpenCvCropper::new();
 
-    Some(Box::new(RecognitionAdapter::new(
+    Some(Box::new(RecognitionRuntimePort::new(
         ocr_engine,
         party_identifier,
         cropper,
