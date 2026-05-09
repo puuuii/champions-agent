@@ -8,7 +8,8 @@ use champions_application::use_cases::{
 };
 use champions_domain::{party::SavedParty, usage::PokemonUsageSummary};
 use champions_interface::{
-    EffortValueUsageView, ItemUsageView, MoveUsageView, NatureUsageView, PokemonUsageSummaryView,
+    AbilityUsageView, EffortValueUsageView, ItemUsageView, MoveUsageView, NatureUsageView,
+    PokemonUsageSummaryView,
 };
 use std::sync::Arc;
 
@@ -128,6 +129,14 @@ fn map_usage_summary_view(usage: &PokemonUsageSummary) -> PokemonUsageSummaryVie
             .map(|item_usage| ItemUsageView {
                 name: item_usage.name.clone(),
                 rate: item_usage.rate.clone(),
+            })
+            .collect(),
+        abilities: usage
+            .abilities
+            .iter()
+            .map(|ability_usage| AbilityUsageView {
+                name: ability_usage.name.clone(),
+                rate: ability_usage.rate.clone(),
             })
             .collect(),
         effort_values: usage

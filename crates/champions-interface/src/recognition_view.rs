@@ -39,6 +39,7 @@ pub struct PokemonUsageSummaryView {
     pub types: Vec<String>,
     pub moves: Vec<MoveUsageView>,
     pub items: Vec<ItemUsageView>,
+    pub abilities: Vec<AbilityUsageView>,
     pub effort_values: Vec<EffortValueUsageView>,
     pub natures: Vec<NatureUsageView>,
 }
@@ -51,6 +52,12 @@ pub struct MoveUsageView {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ItemUsageView {
+    pub name: String,
+    pub rate: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbilityUsageView {
     pub name: String,
     pub rate: String,
 }

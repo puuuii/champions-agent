@@ -7,6 +7,8 @@ pub struct PokemonUsageSummary {
     pub types: Vec<String>,
     pub moves: Vec<MoveUsage>,
     pub items: Vec<ItemUsage>,
+    #[serde(default)]
+    pub abilities: Vec<AbilityUsage>,
     pub effort_values: Vec<EffortValueUsage>,
     pub natures: Vec<NatureUsage>,
 }
@@ -19,6 +21,12 @@ pub struct MoveUsage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ItemUsage {
+    pub name: String,
+    pub rate: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AbilityUsage {
     pub name: String,
     pub rate: String,
 }

@@ -10,8 +10,8 @@ use std::{
 use tokio::sync::mpsc;
 
 use champions_interface::{
-    CandidateView, ConfidenceView, ConflictView, EffortValueUsageView, EventSequence,
-    FrameSequence, ItemUsageView, MoveUsageView, NatureUsageView, OpponentPartyView,
+    AbilityUsageView, CandidateView, ConfidenceView, ConflictView, EffortValueUsageView,
+    EventSequence, FrameSequence, ItemUsageView, MoveUsageView, NatureUsageView, OpponentPartyView,
     PokemonUsageSummaryView, RecognitionAttemptId, RecognizedPokemonView, RuntimeCommand,
     RuntimeEvent,
 };
@@ -697,6 +697,14 @@ fn map_usage_summary_view(
                 rate: i.rate.clone(),
             })
             .collect(),
+        abilities: usage
+            .abilities
+            .iter()
+            .map(|a| AbilityUsageView {
+                name: a.name.clone(),
+                rate: a.rate.clone(),
+            })
+            .collect(),
         effort_values: usage
             .effort_values
             .iter()
@@ -729,7 +737,7 @@ mod tests {
         ConfidenceScore, RecognizedParty, RecognizedPokemon, SelectionSlot,
     };
     use champions_domain::usage::{
-        EffortValueUsage, ItemUsage, MoveUsage, NatureUsage, PokemonUsageSummary,
+        AbilityUsage, EffortValueUsage, ItemUsage, MoveUsage, NatureUsage, PokemonUsageSummary,
     };
 
     #[test]
@@ -770,6 +778,14 @@ mod tests {
                 .map(|usage| usage.name.as_str()),
             Some("ピカチュウ")
         );
+        assert_eq!(
+            view.pokemons[1]
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.abilities.first())
+                .map(|ability| ability.name.as_str()),
+            Some("せいでんき")
+        );
     }
 
     fn sample_usage(name: &str) -> PokemonUsageSummary {
@@ -784,6 +800,10 @@ mod tests {
             items: vec![ItemUsage {
                 name: "きあいのタスキ".to_string(),
                 rate: "35%".to_string(),
+            }],
+            abilities: vec![AbilityUsage {
+                name: "せいでんき".to_string(),
+                rate: "92%".to_string(),
             }],
             effort_values: vec![EffortValueUsage {
                 h: 0,

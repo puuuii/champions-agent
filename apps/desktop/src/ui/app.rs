@@ -428,6 +428,10 @@ impl PokeEditorApp {
                         .width(Length::Fixed(80.0))
                 ]
                 .spacing(10);
+                let mut ability_row = row![
+                    container(text("特性").font(JAPANESE_FONT).size(16)).width(Length::Fixed(80.0))
+                ]
+                .spacing(10);
                 let mut ev_row = row![
                     container(text("努力値").font(JAPANESE_FONT).size(16))
                         .width(Length::Fixed(80.0))
@@ -535,6 +539,27 @@ impl PokeEditorApp {
                     }
                     item_row = item_row.push(container(items_col).width(Length::FillPortion(1)));
 
+                    let mut abilities_col = column![].spacing(2);
+                    if let Some(usage) = usage {
+                        if usage.abilities.is_empty() {
+                            abilities_col =
+                                abilities_col.push(text("-").font(JAPANESE_FONT).size(12));
+                        } else {
+                            for ability in usage.abilities.iter().take(3) {
+                                abilities_col = abilities_col.push(
+                                    text(format!("{} ({})", ability.name, ability.rate))
+                                        .font(JAPANESE_FONT)
+                                        .size(12),
+                                );
+                            }
+                        }
+                    } else {
+                        abilities_col = abilities_col
+                            .push(text("使用率データなし").font(JAPANESE_FONT).size(12));
+                    }
+                    ability_row =
+                        ability_row.push(container(abilities_col).width(Length::FillPortion(1)));
+
                     let mut evs_col = column![].spacing(2);
                     if let Some(usage) = usage {
                         for e in usage.effort_values.iter().take(3) {
@@ -579,8 +604,16 @@ impl PokeEditorApp {
                     );
                 }
 
-                let table =
-                    column![name_row, type_row, move_row, item_row, ev_row, nature_row].spacing(20);
+                let table = column![
+                    name_row,
+                    type_row,
+                    move_row,
+                    item_row,
+                    ability_row,
+                    ev_row,
+                    nature_row
+                ]
+                .spacing(20);
                 content = content.push(table);
 
                 scrollable(content).into()

@@ -246,6 +246,7 @@ fn sample_usage(name: &str) -> PokemonUsageSummary {
             rate: "80%".to_string(),
         }],
         items: vec![],
+        abilities: vec![],
         effort_values: vec![],
         natures: vec![],
     }

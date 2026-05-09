@@ -99,6 +99,7 @@ mod tests {
                 rate: "80%".to_string(),
             }],
             items: vec![],
+            abilities: vec![],
             effort_values: vec![],
             natures: vec![],
         }

@@ -1,7 +1,7 @@
 use champions_application::errors::UsageFetchError;
 use champions_application::ports::{UsageFetcher, UsageSource};
 use champions_domain::usage::{
-    EffortValueUsage, ItemUsage, MoveUsage, NatureUsage, PokemonUsageSummary,
+    AbilityUsage, EffortValueUsage, ItemUsage, MoveUsage, NatureUsage, PokemonUsageSummary,
 };
 use indexmap::IndexMap;
 use regex::Regex;
@@ -69,6 +69,7 @@ fn build_pokemon_list(raw: IndexMap<String, Value>) -> Vec<PokemonUsageSummary> 
             types: str_array(&p["types"]),
             moves: parse_moves(&p["moves"]),
             items: parse_items(&p["items"]),
+            abilities: parse_abilities(&p["abilities"]),
             effort_values: parse_evs(&p["evDistributions"]),
             natures: parse_natures(&p["natures"]),
         })
@@ -112,6 +113,22 @@ fn parse_items(v: &Value) -> Vec<ItemUsage> {
                 .filter_map(|x| {
                     let a = x.as_array()?;
                     Some(ItemUsage {
+                        name: a.first()?.as_str()?.to_owned(),
+                        rate: a.get(1)?.as_str().unwrap_or("").to_owned(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_abilities(v: &Value) -> Vec<AbilityUsage> {
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| {
+                    let a = x.as_array()?;
+                    Some(AbilityUsage {
                         name: a.first()?.as_str()?.to_owned(),
                         rate: a.get(1)?.as_str().unwrap_or("").to_owned(),
                     })

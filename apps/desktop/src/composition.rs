@@ -10,7 +10,9 @@ use champions_infrastructure::config::AppPaths;
 use champions_infrastructure::persistence::{
     CsvCatalogRepository, JsonPartyRepository, JsonUsageRepository,
 };
-use champions_infrastructure::{GameWithUsageFetcher, MangaOcrEngine, OnnxPartyIdentifier, OpenCvCropper};
+use champions_infrastructure::{
+    GameWithUsageFetcher, MangaOcrEngine, OnnxPartyIdentifier, OpenCvCropper,
+};
 use champions_runtime::{
     CommandSender, RecognitionPort, RgbaPreviewConverter, RuntimeBuilder, RuntimeWorkers,
 };

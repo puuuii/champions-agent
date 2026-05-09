@@ -106,6 +106,19 @@ def parse_items(value: Any) -> list[dict[str, str]]:
     return results
 
 
+def parse_abilities(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+
+    results: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, list) or not item or not isinstance(item[0], str):
+            continue
+        rate = item[1] if len(item) > 1 and isinstance(item[1], str) else ""
+        results.append({"name": item[0], "rate": rate})
+    return results
+
+
 def parse_natures(value: Any) -> list[dict[str, str]]:
     if not isinstance(value, list):
         return []
@@ -162,6 +175,7 @@ def build_pokemon_list(raw_data: dict[str, Any]) -> list[dict[str, Any]]:
                 "types": str_array(value.get("types")),
                 "moves": parse_moves(value.get("moves")),
                 "items": parse_items(value.get("items")),
+                "abilities": parse_abilities(value.get("abilities")),
                 "effort_values": parse_evs(value.get("evDistributions")),
                 "natures": parse_natures(value.get("natures")),
             }
