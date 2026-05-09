@@ -12,7 +12,7 @@ Output:
 import os
 import torch
 
-ONNX_PATH = "models/dinov2_vits14.onnx"
+ONNX_PATH = "resources\models\dinov2_vits14.onnx"
 DEVICE = "cpu"  # エクスポートはCPUで十分
 
 
