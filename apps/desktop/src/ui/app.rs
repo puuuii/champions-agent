@@ -4,7 +4,8 @@ use super::subscriptions::{self, RuntimeMessage};
 use crate::services::{DesktopAppServices, SuggestionKind};
 use champions_domain::party::SavedParty;
 use champions_interface::{
-    ConflictView, OpponentPartyView, PokemonUsageSummaryView, RecognizedPokemonView, RuntimeEvent,
+    ConflictView, OpponentPartyView, PokemonUsageSummaryView, RecognizedPokemonView,
+    RuntimeCommand, RuntimeEvent,
 };
 use champions_runtime::PreviewFrame;
 use iced::window;
@@ -87,6 +88,7 @@ pub enum Message {
     TabSelected(Tab),
     Save,
     RuntimeMsg(RuntimeMessage),
+    RuntimeCommandSent(Result<(), String>),
     WindowClosed(window::Id),
     RefreshUsageData,
     UsageDataRefreshed(Result<usize, String>),
@@ -152,7 +154,25 @@ impl PokeEditorApp {
                 self.handle_opponent_pokemon_selection(index, name);
             }
             Message::TabSelected(tab) => {
+                let previous_tab = self.active_tab;
                 self.active_tab = tab;
+
+                if previous_tab != tab {
+                    let command = match tab {
+                        Tab::Editor => RuntimeCommand::StopRecognition,
+                        Tab::SelectionSupport => RuntimeCommand::StartRecognition,
+                    };
+
+                    return Task::perform(
+                        subscriptions::send_command(command),
+                        Message::RuntimeCommandSent,
+                    );
+                }
+            }
+            Message::RuntimeCommandSent(result) => {
+                if let Err(error) = result {
+                    eprintln!("[Runtime] command failed: {error}");
+                }
             }
             Message::Save => {
                 let saved_party = SavedParty {

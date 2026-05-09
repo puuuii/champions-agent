@@ -1,5 +1,5 @@
-use champions_interface::RuntimeEvent;
-use champions_runtime::{EventReceiver, PreviewFrame, PreviewReceiver};
+use champions_interface::{RuntimeCommand, RuntimeEvent};
+use champions_runtime::{CommandSender, EventReceiver, PreviewFrame, PreviewReceiver};
 use iced::Subscription;
 use iced::futures::SinkExt;
 use std::sync::{Arc, OnceLock};
@@ -13,10 +13,27 @@ pub enum RuntimeMessage {
 
 static PREVIEW_RECEIVER: OnceLock<Arc<Mutex<PreviewReceiver>>> = OnceLock::new();
 static EVENT_RECEIVER: OnceLock<Arc<Mutex<EventReceiver>>> = OnceLock::new();
+static COMMAND_SENDER: OnceLock<CommandSender> = OnceLock::new();
 
-pub fn init_receivers(preview: Arc<Mutex<PreviewReceiver>>, event: Arc<Mutex<EventReceiver>>) {
+pub fn init_runtime(
+    command_sender: CommandSender,
+    preview: Arc<Mutex<PreviewReceiver>>,
+    event: Arc<Mutex<EventReceiver>>,
+) {
+    let _ = COMMAND_SENDER.set(command_sender);
     let _ = PREVIEW_RECEIVER.set(preview);
     let _ = EVENT_RECEIVER.set(event);
+}
+
+pub async fn send_command(command: RuntimeCommand) -> Result<(), String> {
+    let Some(sender) = COMMAND_SENDER.get().cloned() else {
+        return Err("runtime command sender is not initialized".to_string());
+    };
+
+    sender
+        .send(command)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 pub fn preview_subscription() -> Subscription<RuntimeMessage> {

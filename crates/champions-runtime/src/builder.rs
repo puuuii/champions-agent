@@ -283,7 +283,7 @@ impl RuntimeControl {
     }
 
     fn preview_interval(&self) -> Duration {
-        Duration::from_millis(1000 / self.preview_target_fps.load(Ordering::Relaxed) as u64)
+        Duration::from_secs_f64(1.0 / self.preview_target_fps.load(Ordering::Relaxed) as f64)
     }
 
     fn set_recognition_enabled(&self, recognition_enabled: bool) {
@@ -323,6 +323,8 @@ impl CaptureWorker {
                 continue;
             }
 
+            let tick_started = Instant::now();
+
             match self.frame_source.read_frame() {
                 Ok(Some(frame)) => {
                     let frame = CapturedFrame {
@@ -343,7 +345,14 @@ impl CaptureWorker {
                 }
             }
 
-            std::thread::sleep(self.control.preview_interval());
+            let sleep_for = self
+                .control
+                .preview_interval()
+                .saturating_sub(tick_started.elapsed());
+
+            if !sleep_for.is_zero() {
+                std::thread::sleep(sleep_for);
+            }
         }
     }
 }
@@ -371,6 +380,8 @@ impl PreviewWorker {
                 continue;
             }
 
+            let tick_started = Instant::now();
+
             if let Some(frame) = self.latest_frame.peek() {
                 if last_previewed_frame_seq != Some(frame.frame_sequence) {
                     let preview = self
@@ -382,7 +393,14 @@ impl PreviewWorker {
                 }
             }
 
-            std::thread::sleep(self.control.preview_interval());
+            let sleep_for = self
+                .control
+                .preview_interval()
+                .saturating_sub(tick_started.elapsed());
+
+            if !sleep_for.is_zero() {
+                std::thread::sleep(sleep_for);
+            }
         }
     }
 }

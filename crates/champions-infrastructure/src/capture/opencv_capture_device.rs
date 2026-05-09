@@ -22,6 +22,7 @@ pub struct CaptureConfig {
     pub backend: CaptureBackend,
     pub width: u32,
     pub height: u32,
+    pub fps: u32,
 }
 
 impl Default for CaptureConfig {
@@ -31,6 +32,7 @@ impl Default for CaptureConfig {
             backend: CaptureBackend::Auto,
             width: 1920,
             height: 1080,
+            fps: 60,
         }
     }
 }
@@ -85,6 +87,8 @@ impl OpenCvCaptureDevice {
 
         let _ = capture.set(videoio::CAP_PROP_FRAME_WIDTH, config.width as f64);
         let _ = capture.set(videoio::CAP_PROP_FRAME_HEIGHT, config.height as f64);
+        let _ = capture.set(videoio::CAP_PROP_FPS, config.fps as f64);
+        let _ = capture.set(videoio::CAP_PROP_BUFFERSIZE, 1.0);
 
         Ok(Self {
             capture,

@@ -119,7 +119,8 @@ impl RuntimeBootstrap {
         let (handle, workers) = builder.build();
         let (command_sender, event_receiver, preview_receiver) = handle.split();
 
-        ui::subscriptions::init_receivers(
+        ui::subscriptions::init_runtime(
+            command_sender.clone(),
             Arc::new(tokio::sync::Mutex::new(preview_receiver)),
             Arc::new(tokio::sync::Mutex::new(event_receiver)),
         );
@@ -176,8 +177,5 @@ fn spawn_runtime_workers(command_sender: CommandSender, workers: RuntimeWorkers)
 async fn start_runtime(command_sender: &CommandSender) {
     let _ = command_sender
         .send(champions_interface::RuntimeCommand::StartCapture)
-        .await;
-    let _ = command_sender
-        .send(champions_interface::RuntimeCommand::StartRecognition)
         .await;
 }
