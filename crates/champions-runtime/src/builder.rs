@@ -1,4 +1,11 @@
-use std::{collections::HashMap, time::Instant};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 use tokio::sync::mpsc;
 
@@ -111,7 +118,6 @@ pub struct RuntimeWorkers {
     event_tx: mpsc::Sender<RuntimeEvent>,
     preview_tx: mpsc::Sender<PreviewFrame>,
     shutdown_signal: ShutdownSignal,
-    #[allow(dead_code)]
     shutdown_token: ShutdownToken,
     latest_frame: LatestFrame,
     preview_max_width: u32,
@@ -119,224 +125,361 @@ pub struct RuntimeWorkers {
 }
 
 impl RuntimeWorkers {
-    pub async fn run(mut self) {
-        let mut frame_seq: u64 = 0;
-        let mut event_seq: u64 = 0;
-        let mut capturing = false;
-        let mut preview_enabled = true;
-        let mut recognition_enabled = false;
-        let mut recognition_attempt_id: u64 = 0;
-        let mut scheduler = RecognitionScheduler::new();
+    pub async fn run(self) {
+        let RuntimeWorkers {
+            frame_source,
+            preview_converter,
+            recognition_port,
+            mut command_rx,
+            event_tx,
+            preview_tx,
+            shutdown_signal,
+            shutdown_token,
+            latest_frame,
+            preview_max_width,
+            preview_target_fps,
+        } = self;
 
-        let preview_interval =
-            tokio::time::Duration::from_millis(1000 / self.preview_target_fps.max(1) as u64);
-        let mut preview_timer = tokio::time::interval(preview_interval);
-        preview_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let control = Arc::new(RuntimeControl::new(preview_max_width, preview_target_fps));
+        let event_seq = EventSequencer::default();
+        let frame_seq = FrameSequencer::default();
 
-        let recognition_interval = tokio::time::Duration::from_millis(100);
-        let mut recognition_timer = tokio::time::interval(recognition_interval);
-        recognition_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let capture_worker = CaptureWorker {
+            frame_source,
+            latest_frame: latest_frame.clone(),
+            event_tx: event_tx.clone(),
+            event_seq: event_seq.clone(),
+            frame_seq,
+            control: control.clone(),
+            shutdown_token: shutdown_token.clone(),
+        }
+        .spawn();
 
-        loop {
-            tokio::select! {
-                Some(cmd) = self.command_rx.recv() => {
-                    match cmd {
-                        RuntimeCommand::Shutdown => {
-                            self.shutdown_signal.trigger();
-                            event_seq += 1;
-                            let _ = self.event_tx.send(RuntimeEvent::RuntimeStopped {
-                                event_sequence: EventSequence(event_seq),
-                            }).await;
-                            return;
-                        }
-                        RuntimeCommand::StartCapture => {
-                            capturing = true;
-                            event_seq += 1;
-                            let _ = self.event_tx.send(RuntimeEvent::CaptureStatusChanged {
-                                event_sequence: EventSequence(event_seq),
-                                status: champions_interface::CaptureStatus::Running,
-                            }).await;
-                        }
-                        RuntimeCommand::StopCapture => {
-                            capturing = false;
-                            event_seq += 1;
-                            let _ = self.event_tx.send(RuntimeEvent::CaptureStatusChanged {
-                                event_sequence: EventSequence(event_seq),
-                                status: champions_interface::CaptureStatus::Stopped,
-                            }).await;
-                        }
-                        RuntimeCommand::StartRecognition => {
-                            if self.recognition_port.is_some() {
-                                recognition_enabled = true;
-                                scheduler.reset();
-                                event_seq += 1;
-                                let _ = self.event_tx.send(RuntimeEvent::RecognitionStatusChanged {
-                                    event_sequence: EventSequence(event_seq),
-                                    status: champions_interface::RecognitionStatus::Running,
-                                }).await;
-                            }
-                        }
-                        RuntimeCommand::StopRecognition => {
-                            recognition_enabled = false;
-                            scheduler.reset();
-                            event_seq += 1;
-                            let _ = self.event_tx.send(RuntimeEvent::RecognitionStatusChanged {
-                                event_sequence: EventSequence(event_seq),
-                                status: champions_interface::RecognitionStatus::Stopped,
-                            }).await;
-                        }
-                        RuntimeCommand::SetPreviewEnabled(enabled) => {
-                            preview_enabled = enabled;
-                        }
-                        RuntimeCommand::SetPreviewMaxWidth(w) => {
-                            self.preview_max_width = w;
-                        }
-                        RuntimeCommand::SetPreviewTargetFps(fps) => {
-                            self.preview_target_fps = fps;
-                            let interval = tokio::time::Duration::from_millis(
-                                1000 / fps.max(1) as u64
-                            );
-                            preview_timer = tokio::time::interval(interval);
-                            preview_timer.set_missed_tick_behavior(
-                                tokio::time::MissedTickBehavior::Skip,
-                            );
-                        }
-                        _ => {}
-                    }
+        let preview_worker = PreviewWorker {
+            preview_converter,
+            latest_frame: latest_frame.clone(),
+            preview_tx,
+            control: control.clone(),
+            shutdown_token: shutdown_token.clone(),
+        }
+        .spawn();
+
+        let recognition_worker = recognition_port.map(|recognition_port| {
+            RecognitionWorker {
+                recognition_port,
+                latest_frame,
+                event_tx: event_tx.clone(),
+                event_seq: event_seq.clone(),
+                control: control.clone(),
+                shutdown_token: shutdown_token.clone(),
+            }
+            .spawn()
+        });
+
+        self::run_command_loop(
+            &mut command_rx,
+            &event_tx,
+            &shutdown_signal,
+            &control,
+            &event_seq,
+            recognition_worker.is_some(),
+        )
+        .await;
+
+        let _ = capture_worker.await;
+        let _ = preview_worker.await;
+        if let Some(recognition_worker) = recognition_worker {
+            let _ = recognition_worker.await;
+        }
+    }
+}
+
+const RECOGNITION_TICK_INTERVAL: Duration = Duration::from_millis(100);
+const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+#[derive(Default, Clone)]
+struct EventSequencer {
+    next: Arc<AtomicU64>,
+}
+
+impl EventSequencer {
+    fn next(&self) -> EventSequence {
+        EventSequence(self.next.fetch_add(1, Ordering::Relaxed) + 1)
+    }
+}
+
+#[derive(Default, Clone)]
+struct FrameSequencer {
+    next: Arc<AtomicU64>,
+}
+
+impl FrameSequencer {
+    fn next(&self) -> FrameSequence {
+        FrameSequence(self.next.fetch_add(1, Ordering::Relaxed) + 1)
+    }
+}
+
+struct RuntimeControl {
+    capturing: AtomicBool,
+    preview_enabled: AtomicBool,
+    recognition_enabled: AtomicBool,
+    preview_max_width: AtomicU32,
+    preview_target_fps: AtomicU8,
+    recognition_generation: AtomicU64,
+}
+
+impl RuntimeControl {
+    fn new(preview_max_width: u32, preview_target_fps: u8) -> Self {
+        Self {
+            capturing: AtomicBool::new(false),
+            preview_enabled: AtomicBool::new(true),
+            recognition_enabled: AtomicBool::new(false),
+            preview_max_width: AtomicU32::new(preview_max_width),
+            preview_target_fps: AtomicU8::new(preview_target_fps.max(1)),
+            recognition_generation: AtomicU64::new(0),
+        }
+    }
+
+    fn set_capturing(&self, capturing: bool) {
+        self.capturing.store(capturing, Ordering::Relaxed);
+    }
+
+    fn is_capturing(&self) -> bool {
+        self.capturing.load(Ordering::Relaxed)
+    }
+
+    fn set_preview_enabled(&self, preview_enabled: bool) {
+        self.preview_enabled
+            .store(preview_enabled, Ordering::Relaxed);
+    }
+
+    fn is_preview_enabled(&self) -> bool {
+        self.preview_enabled.load(Ordering::Relaxed)
+    }
+
+    fn set_preview_max_width(&self, preview_max_width: u32) {
+        self.preview_max_width
+            .store(preview_max_width, Ordering::Relaxed);
+    }
+
+    fn preview_max_width(&self) -> u32 {
+        self.preview_max_width.load(Ordering::Relaxed)
+    }
+
+    fn set_preview_target_fps(&self, preview_target_fps: u8) {
+        self.preview_target_fps
+            .store(preview_target_fps.max(1), Ordering::Relaxed);
+    }
+
+    fn preview_interval(&self) -> Duration {
+        Duration::from_millis(1000 / self.preview_target_fps.load(Ordering::Relaxed) as u64)
+    }
+
+    fn set_recognition_enabled(&self, recognition_enabled: bool) {
+        self.recognition_enabled
+            .store(recognition_enabled, Ordering::Relaxed);
+        self.recognition_generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn is_recognition_enabled(&self) -> bool {
+        self.recognition_enabled.load(Ordering::Relaxed)
+    }
+
+    fn recognition_generation(&self) -> u64 {
+        self.recognition_generation.load(Ordering::Relaxed)
+    }
+}
+
+struct CaptureWorker {
+    frame_source: Box<dyn FrameSource>,
+    latest_frame: LatestFrame,
+    event_tx: mpsc::Sender<RuntimeEvent>,
+    event_seq: EventSequencer,
+    frame_seq: FrameSequencer,
+    control: Arc<RuntimeControl>,
+    shutdown_token: ShutdownToken,
+}
+
+impl CaptureWorker {
+    fn spawn(mut self) -> tokio::task::JoinHandle<()> {
+        tokio::task::spawn_blocking(move || self.run())
+    }
+
+    fn run(&mut self) {
+        while !self.shutdown_token.is_shutdown() {
+            if !self.control.is_capturing() {
+                std::thread::sleep(IDLE_POLL_INTERVAL);
+                continue;
+            }
+
+            match self.frame_source.read_frame() {
+                Ok(Some(frame)) => {
+                    let frame = champions_interface::CapturedFrame {
+                        frame_sequence: self.frame_seq.next(),
+                        ..frame
+                    };
+                    self.latest_frame.store(frame);
                 }
-                _ = preview_timer.tick(), if capturing && preview_enabled => {
-                    if let Err(e) = self.capture_and_preview(&mut frame_seq, &mut event_seq).await {
-                        tracing::error!("capture error: {e}");
-                        event_seq += 1;
-                        let _ = self.event_tx.send(RuntimeEvent::Error {
-                            event_sequence: EventSequence(event_seq),
-                            error: match &e {
-                                CaptureError::DeviceNotFound => {
-                                    champions_interface::RuntimeError::CaptureDeviceNotFound
-                                }
-                                CaptureError::ReadFailed(msg) => {
-                                    champions_interface::RuntimeError::CaptureReadFailed(msg.clone())
-                                }
-                            },
-                        }).await;
-                    }
-                }
-                _ = recognition_timer.tick(), if capturing && recognition_enabled && self.recognition_port.is_some() => {
-                    self.run_recognition_tick(
-                        &mut scheduler,
-                        &mut event_seq,
-                        &mut recognition_attempt_id,
-                        frame_seq,
-                    ).await;
-                }
-                else => {
-                    tokio::task::yield_now().await;
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::error!("capture error: {error}");
+                    blocking_send_event(&self.event_tx, &self.event_seq, |event_sequence| {
+                        RuntimeEvent::Error {
+                            event_sequence,
+                            error: map_capture_error(&error),
+                        }
+                    });
                 }
             }
+
+            std::thread::sleep(self.control.preview_interval());
+        }
+    }
+}
+
+struct PreviewWorker {
+    preview_converter: Box<dyn PreviewFrameConverter>,
+    latest_frame: LatestFrame,
+    preview_tx: mpsc::Sender<PreviewFrame>,
+    control: Arc<RuntimeControl>,
+    shutdown_token: ShutdownToken,
+}
+
+impl PreviewWorker {
+    fn spawn(mut self) -> tokio::task::JoinHandle<()> {
+        tokio::task::spawn_blocking(move || self.run())
+    }
+
+    fn run(&mut self) {
+        let mut last_previewed_frame_seq: Option<FrameSequence> = None;
+
+        while !self.shutdown_token.is_shutdown() {
+            if !self.control.is_capturing() || !self.control.is_preview_enabled() {
+                std::thread::sleep(IDLE_POLL_INTERVAL);
+                continue;
+            }
+
+            if let Some(frame) = self.latest_frame.peek() {
+                if last_previewed_frame_seq != Some(frame.frame_sequence) {
+                    let preview = self
+                        .preview_converter
+                        .convert(&frame, self.control.preview_max_width());
+                    let _ = self.preview_tx.try_send(preview);
+                    last_previewed_frame_seq = Some(frame.frame_sequence);
+                }
+            }
+
+            std::thread::sleep(self.control.preview_interval());
+        }
+    }
+}
+
+struct RecognitionWorker {
+    recognition_port: Box<dyn RecognitionPort>,
+    latest_frame: LatestFrame,
+    event_tx: mpsc::Sender<RuntimeEvent>,
+    event_seq: EventSequencer,
+    control: Arc<RuntimeControl>,
+    shutdown_token: ShutdownToken,
+}
+
+impl RecognitionWorker {
+    fn spawn(self) -> tokio::task::JoinHandle<()> {
+        tokio::task::spawn_blocking(move || self.run())
+    }
+
+    fn run(self) {
+        let mut scheduler = RecognitionScheduler::new();
+        let mut attempt_id = 0_u64;
+        let mut recognition_generation = self.control.recognition_generation();
+
+        while !self.shutdown_token.is_shutdown() {
+            let next_generation = self.control.recognition_generation();
+            if next_generation != recognition_generation {
+                scheduler.reset();
+                recognition_generation = next_generation;
+            }
+
+            if !self.control.is_capturing() || !self.control.is_recognition_enabled() {
+                std::thread::sleep(IDLE_POLL_INTERVAL);
+                continue;
+            }
+
+            self.run_tick(&mut scheduler, &mut attempt_id);
+            std::thread::sleep(RECOGNITION_TICK_INTERVAL);
         }
     }
 
-    async fn capture_and_preview(
-        &mut self,
-        frame_seq: &mut u64,
-        _event_seq: &mut u64,
-    ) -> Result<(), CaptureError> {
-        if let Some(frame) = self.frame_source.read_frame()? {
-            *frame_seq += 1;
-            let frame = champions_interface::CapturedFrame {
-                frame_sequence: FrameSequence(*frame_seq),
-                ..frame
-            };
-
-            self.latest_frame.store(frame.clone());
-
-            let preview = self
-                .preview_converter
-                .convert(&frame, self.preview_max_width);
-            let _ = self.preview_tx.try_send(preview);
-        }
-        Ok(())
-    }
-
-    async fn run_recognition_tick(
-        &mut self,
-        scheduler: &mut RecognitionScheduler,
-        event_seq: &mut u64,
-        attempt_id: &mut u64,
-        current_frame_seq: u64,
-    ) {
+    fn run_tick(&self, scheduler: &mut RecognitionScheduler, attempt_id: &mut u64) {
         let now = Instant::now();
-        let port = match &self.recognition_port {
-            Some(p) => p,
-            None => return,
-        };
 
         if scheduler.should_run_ocr(now) {
             let frame = match self.latest_frame.peek() {
-                Some(f) => f,
+                Some(frame) => frame,
                 None => return,
             };
 
-            let ocr_image = port.extract_target_text_image(
+            let ocr_image = self.recognition_port.extract_target_text_image(
                 frame.image.width,
                 frame.image.height,
                 &frame.image.bytes,
             );
 
-            match port.detect_selection_screen(ocr_image) {
+            match self.recognition_port.detect_selection_screen(ocr_image) {
                 Ok(result) => {
-                    let prev_state = scheduler.state();
+                    let previous_state = scheduler.state();
                     scheduler.on_ocr_result(result.screen_state, now);
 
-                    if scheduler.state() != prev_state {
+                    if scheduler.state() != previous_state {
                         tracing::debug!(
                             "scheduler state: {:?} -> {:?} (text: {:?})",
-                            prev_state,
+                            previous_state,
                             scheduler.state(),
                             result.raw_text
                         );
                     }
                 }
-                Err(e) => {
-                    tracing::warn!("OCR failed: {e}");
-                    *event_seq += 1;
-                    let _ = self
-                        .event_tx
-                        .send(RuntimeEvent::Error {
-                            event_sequence: EventSequence(*event_seq),
-                            error: champions_interface::RuntimeError::RecognitionFailed(e),
-                        })
-                        .await;
+                Err(error) => {
+                    tracing::warn!("OCR failed: {error}");
+                    blocking_send_event(&self.event_tx, &self.event_seq, |event_sequence| {
+                        RuntimeEvent::Error {
+                            event_sequence,
+                            error: champions_interface::RuntimeError::RecognitionFailed(error),
+                        }
+                    });
                 }
             }
         }
 
         if scheduler.should_run_identification() {
             let frame = match self.latest_frame.peek() {
-                Some(f) => f,
+                Some(frame) => frame,
                 None => return,
             };
 
-            let party_images =
-                port.extract_party_slots(frame.image.width, frame.image.height, &frame.image.bytes);
+            let party_images = self.recognition_port.extract_party_slots(
+                frame.image.width,
+                frame.image.height,
+                &frame.image.bytes,
+            );
 
-            match port.identify_opponent_party(party_images) {
+            match self.recognition_port.identify_opponent_party(party_images) {
                 Ok(result) => {
                     *attempt_id += 1;
                     scheduler.on_identification_complete(now);
 
                     let party_view = map_to_opponent_party_view(&result);
+                    let frame_sequence = frame.frame_sequence;
+                    let recognition_attempt_id = RecognitionAttemptId(*attempt_id);
 
-                    *event_seq += 1;
-                    let _ = self
-                        .event_tx
-                        .send(RuntimeEvent::OpponentPartyRecognized {
-                            event_sequence: EventSequence(*event_seq),
-                            frame_sequence: FrameSequence(current_frame_seq),
-                            attempt_id: RecognitionAttemptId(*attempt_id),
+                    blocking_send_event(&self.event_tx, &self.event_seq, |event_sequence| {
+                        RuntimeEvent::OpponentPartyRecognized {
+                            event_sequence,
+                            frame_sequence,
+                            attempt_id: recognition_attempt_id,
                             party: party_view,
-                        })
-                        .await;
+                        }
+                    });
 
                     tracing::info!(
                         "opponent party identified (attempt {}): {} pokemon, {} conflicts",
@@ -345,18 +488,120 @@ impl RuntimeWorkers {
                         result.conflicts.len()
                     );
                 }
-                Err(e) => {
-                    tracing::error!("party identification failed: {e}");
-                    *event_seq += 1;
-                    let _ = self
-                        .event_tx
-                        .send(RuntimeEvent::Error {
-                            event_sequence: EventSequence(*event_seq),
-                            error: champions_interface::RuntimeError::RecognitionFailed(e),
-                        })
-                        .await;
+                Err(error) => {
+                    tracing::error!("party identification failed: {error}");
+                    blocking_send_event(&self.event_tx, &self.event_seq, |event_sequence| {
+                        RuntimeEvent::Error {
+                            event_sequence,
+                            error: champions_interface::RuntimeError::RecognitionFailed(error),
+                        }
+                    });
                 }
             }
+        }
+    }
+}
+
+async fn run_command_loop(
+    command_rx: &mut mpsc::Receiver<RuntimeCommand>,
+    event_tx: &mpsc::Sender<RuntimeEvent>,
+    shutdown_signal: &ShutdownSignal,
+    control: &RuntimeControl,
+    event_seq: &EventSequencer,
+    has_recognition_worker: bool,
+) {
+    while let Some(command) = command_rx.recv().await {
+        match command {
+            RuntimeCommand::Shutdown => {
+                shutdown_signal.trigger();
+                send_event(event_tx, event_seq, |event_sequence| {
+                    RuntimeEvent::RuntimeStopped { event_sequence }
+                })
+                .await;
+                return;
+            }
+            RuntimeCommand::StartCapture => {
+                control.set_capturing(true);
+                send_event(event_tx, event_seq, |event_sequence| {
+                    RuntimeEvent::CaptureStatusChanged {
+                        event_sequence,
+                        status: champions_interface::CaptureStatus::Running,
+                    }
+                })
+                .await;
+            }
+            RuntimeCommand::StopCapture => {
+                control.set_capturing(false);
+                send_event(event_tx, event_seq, |event_sequence| {
+                    RuntimeEvent::CaptureStatusChanged {
+                        event_sequence,
+                        status: champions_interface::CaptureStatus::Stopped,
+                    }
+                })
+                .await;
+            }
+            RuntimeCommand::StartRecognition if has_recognition_worker => {
+                control.set_recognition_enabled(true);
+                send_event(event_tx, event_seq, |event_sequence| {
+                    RuntimeEvent::RecognitionStatusChanged {
+                        event_sequence,
+                        status: champions_interface::RecognitionStatus::Running,
+                    }
+                })
+                .await;
+            }
+            RuntimeCommand::StopRecognition => {
+                control.set_recognition_enabled(false);
+                send_event(event_tx, event_seq, |event_sequence| {
+                    RuntimeEvent::RecognitionStatusChanged {
+                        event_sequence,
+                        status: champions_interface::RecognitionStatus::Stopped,
+                    }
+                })
+                .await;
+            }
+            RuntimeCommand::SetPreviewEnabled(enabled) => {
+                control.set_preview_enabled(enabled);
+            }
+            RuntimeCommand::SetPreviewMaxWidth(preview_max_width) => {
+                control.set_preview_max_width(preview_max_width);
+            }
+            RuntimeCommand::SetPreviewTargetFps(preview_target_fps) => {
+                control.set_preview_target_fps(preview_target_fps);
+            }
+            _ => {}
+        }
+    }
+
+    shutdown_signal.trigger();
+    send_event(event_tx, event_seq, |event_sequence| {
+        RuntimeEvent::RuntimeStopped { event_sequence }
+    })
+    .await;
+}
+
+async fn send_event<F>(event_tx: &mpsc::Sender<RuntimeEvent>, event_seq: &EventSequencer, build: F)
+where
+    F: FnOnce(EventSequence) -> RuntimeEvent,
+{
+    let _ = event_tx.send(build(event_seq.next())).await;
+}
+
+fn blocking_send_event<F>(
+    event_tx: &mpsc::Sender<RuntimeEvent>,
+    event_seq: &EventSequencer,
+    build: F,
+) where
+    F: FnOnce(EventSequence) -> RuntimeEvent,
+{
+    let _ = event_tx.blocking_send(build(event_seq.next()));
+}
+
+fn map_capture_error(error: &CaptureError) -> champions_interface::RuntimeError {
+    match error {
+        CaptureError::DeviceNotFound => champions_interface::RuntimeError::CaptureDeviceNotFound,
+        CaptureError::ReadFailed(message) => {
+            champions_interface::RuntimeError::CaptureReadFailed(message.clone())
         }
     }
 }
