@@ -1,25 +1,20 @@
 use super::components::VideoPreview;
 use super::pokemon::{FieldType, PokemonState, PokemonView, SuggestionRequest};
 use super::subscriptions::{self, RuntimeMessage};
-use champions_application::ports::{
-    CatalogRepository, PartyRepository, UsageFetcher, UsageRepository, UsageSource,
-};
-use champions_application::use_cases::{
-    GetPokemonUsageQuery, GetPokemonUsageUseCase, LoadPartyUseCase, RefreshUsageDataCommand,
-    RefreshUsageDataUseCase, SavePartyCommand, SavePartyUseCase, SuggestKind, SuggestNamesQuery,
-    SuggestNamesUseCase,
-};
-use champions_domain::{party::SavedParty, usage::PokemonUsageSummary};
+use crate::services::{DesktopAppServices, SuggestionKind};
+use champions_domain::party::SavedParty;
 use champions_interface::{
     ConflictView, OpponentPartyView, PokemonUsageSummaryView, RecognizedPokemonView, RuntimeEvent,
 };
+<<<<<<< HEAD
 use champions_runtime::{CommandSender, PreviewFrame};
+=======
+>>>>>>> 5
 use iced::window;
 use iced::{
     Border, Color, Element, Length, Size, Subscription, Task,
-    widget::{button, column, container, row, scrollable, text, text_input},
+    widget::{button, column, container, image, row, scrollable, text, text_input},
 };
-use std::sync::Arc;
 
 use super::JAPANESE_FONT;
 
@@ -80,17 +75,10 @@ pub struct PokeEditorApp {
     pokemons: [PokemonState; 6],
     active_tab: Tab,
     opponent_party: Option<OpponentPartyState>,
-    catalog_repo: Arc<dyn CatalogRepository>,
-    party_repo: Arc<dyn PartyRepository>,
-    #[allow(dead_code)]
-    command_sender: Arc<CommandSender>,
-    latest_preview: Option<PreviewFrame>,
+    services: DesktopAppServices,
+    latest_preview: Option<image::Handle>,
     preview_window_id: Option<window::Id>,
     main_window_id: Option<window::Id>,
-
-    // --- 新規追加 ---
-    usage_fetcher: Arc<dyn UsageFetcher>,
-    usage_repo: Arc<dyn UsageRepository>,
     is_refreshing: bool,
 }
 
@@ -103,26 +91,17 @@ pub enum Message {
     Save,
     RuntimeMsg(RuntimeMessage),
     WindowClosed(window::Id),
-
-    // --- 新規追加 ---
     RefreshUsageData,
     UsageDataRefreshed(Result<usize, String>),
 }
 
 impl PokeEditorApp {
-    pub fn new(
-        catalog_repo: Arc<dyn CatalogRepository>,
-        party_repo: Arc<dyn PartyRepository>,
-        command_sender: Arc<CommandSender>,
-        usage_fetcher: Arc<dyn UsageFetcher>,
-        usage_repo: Arc<dyn UsageRepository>,
-    ) -> (Self, Task<Message>) {
-        let load_uc = LoadPartyUseCase::new(party_repo.as_ref());
-        let pokemons = match load_uc.execute() {
-            Ok(result) if !result.party.pokemons.is_empty() => {
+    pub fn new(services: DesktopAppServices) -> (Self, Task<Message>) {
+        let pokemons = match services.load_party() {
+            Ok(party) if !party.pokemons.is_empty() => {
                 let mut pokes =
                     std::array::from_fn(|i| PokemonState::new(format!("poke{}", i + 1)));
-                for (i, build) in result.party.pokemons.into_iter().enumerate().take(6) {
+                for (i, build) in party.pokemons.into_iter().enumerate().take(6) {
                     pokes[i] = PokemonState::from_saved_build(format!("poke{}", i + 1), build);
                 }
                 pokes
@@ -151,14 +130,10 @@ impl PokeEditorApp {
                 pokemons,
                 active_tab: Tab::Editor,
                 opponent_party: None,
-                catalog_repo,
-                party_repo,
-                command_sender,
+                services,
                 latest_preview: None,
                 preview_window_id: Some(preview_id),
                 main_window_id: Some(main_id),
-                usage_fetcher,
-                usage_repo,
                 is_refreshing: false,
             },
             Task::batch([main_task.discard(), preview_task.discard()]),
@@ -186,14 +161,13 @@ impl PokeEditorApp {
                 let saved_party = SavedParty {
                     pokemons: self.pokemons.iter().map(|p| p.to_build()).collect(),
                 };
-                let save_uc = SavePartyUseCase::new(self.party_repo.as_ref());
-                if let Err(e) = save_uc.execute(SavePartyCommand { party: saved_party }) {
+                if let Err(e) = self.services.save_party(saved_party) {
                     eprintln!("Failed to save party: {e}");
                 }
             }
             Message::RuntimeMsg(runtime_msg) => match runtime_msg {
                 RuntimeMessage::PreviewFrameReceived(frame) => {
-                    self.latest_preview = Some(frame);
+                    self.latest_preview = Some(VideoPreview::handle_from_frame(&frame));
                 }
                 RuntimeMessage::RuntimeEventReceived(event) => {
                     self.handle_runtime_event(event);
@@ -206,34 +180,24 @@ impl PokeEditorApp {
                     return iced::exit();
                 }
             }
-            // --- 新規追加: 使用率データの更新 ---
             Message::RefreshUsageData => {
                 if self.is_refreshing {
                     return Task::none();
                 }
                 self.is_refreshing = true;
 
-                let fetcher = self.usage_fetcher.clone();
-                let repo = self.usage_repo.clone();
+                let services = self.services.clone();
 
                 return Task::perform(
                     async move {
-                        let cmd = RefreshUsageDataCommand {
-                            source: UsageSource::GameWith,
-                        };
-                        // ↓ use_case の構築をクロージャ内に移動
-                        tokio::task::spawn_blocking(move || {
-                            let use_case =
-                                RefreshUsageDataUseCase::new(fetcher.as_ref(), repo.as_ref());
-                            use_case.execute(cmd)
-                        })
-                        .await
-                        .unwrap()
+                        match tokio::task::spawn_blocking(move || services.refresh_usage_data())
+                            .await
+                        {
+                            Ok(result) => result,
+                            Err(error) => Err(error.to_string()),
+                        }
                     },
-                    |result| match result {
-                        Ok(res) => Message::UsageDataRefreshed(Ok(res.count)),
-                        Err(e) => Message::UsageDataRefreshed(Err(e.to_string())),
-                    },
+                    Message::UsageDataRefreshed,
                 );
             }
             Message::UsageDataRefreshed(result) => {
@@ -273,28 +237,15 @@ impl PokeEditorApp {
         }
 
         let kind = match req.field {
-            FieldType::Species => SuggestKind::Species,
-            FieldType::Move(_) => SuggestKind::Move,
-            FieldType::Item => SuggestKind::Item,
-            FieldType::Nature => SuggestKind::Nature,
-            FieldType::Ability => SuggestKind::Ability,
+            FieldType::Species => SuggestionKind::Species,
+            FieldType::Move(_) => SuggestionKind::Move,
+            FieldType::Item => SuggestionKind::Item,
+            FieldType::Nature => SuggestionKind::Nature,
+            FieldType::Ability => SuggestionKind::Ability,
         };
 
-        let suggest_uc = SuggestNamesUseCase::new(self.catalog_repo.as_ref());
-        let query = SuggestNamesQuery {
-            kind,
-            query: req.query,
-            limit: 5,
-        };
-
-        match suggest_uc.execute(query) {
-            Ok(result) => {
-                self.pokemons[index].set_suggestions(result.suggestions);
-            }
-            Err(_) => {
-                self.pokemons[index].set_suggestions(Vec::new());
-            }
-        }
+        let suggestions = self.services.suggest_names(kind, &req.query, 5);
+        self.pokemons[index].set_suggestions(suggestions);
     }
 
     fn handle_opponent_pokemon_name_changed(&mut self, index: usize, input_name: String) {
@@ -323,37 +274,12 @@ impl PokeEditorApp {
     }
 
     fn suggest_species_names(&self, query: &str) -> Vec<String> {
-        let query = query.trim();
-        if query.is_empty() {
-            return Vec::new();
-        }
-
-        let suggest_uc = SuggestNamesUseCase::new(self.catalog_repo.as_ref());
-        let query = SuggestNamesQuery {
-            kind: SuggestKind::Species,
-            query: query.to_string(),
-            limit: 5,
-        };
-
-        match suggest_uc.execute(query) {
-            Ok(result) => result.suggestions,
-            Err(_) => Vec::new(),
-        }
+        self.services
+            .suggest_names(SuggestionKind::Species, query, 5)
     }
 
     fn lookup_usage_summary_view(&self, name: &str) -> Option<PokemonUsageSummaryView> {
-        let name = name.trim();
-        if name.is_empty() {
-            return None;
-        }
-
-        let get_usage_uc = GetPokemonUsageUseCase::new(self.usage_repo.as_ref());
-        match get_usage_uc.execute(GetPokemonUsageQuery {
-            name: name.to_string(),
-        }) {
-            Ok(result) => result.usage.as_ref().map(map_usage_summary_view),
-            Err(_) => None,
-        }
+        self.services.lookup_usage_summary_view(name)
     }
 
     fn refresh_opponent_usage(&mut self) {
@@ -702,50 +628,4 @@ fn format_conflict_summary(conflicts: &[ConflictView]) -> Option<String> {
         .join(" / ");
 
     Some(format!("重複候補があります: {body}"))
-}
-
-fn map_usage_summary_view(usage: &PokemonUsageSummary) -> PokemonUsageSummaryView {
-    PokemonUsageSummaryView {
-        name: usage.name.clone(),
-        types: usage.types.clone(),
-        moves: usage
-            .moves
-            .iter()
-            .map(|move_usage| champions_interface::MoveUsageView {
-                name: move_usage.name.clone(),
-                rate: move_usage.rate.clone(),
-            })
-            .collect(),
-        items: usage
-            .items
-            .iter()
-            .map(|item_usage| champions_interface::ItemUsageView {
-                name: item_usage.name.clone(),
-                rate: item_usage.rate.clone(),
-            })
-            .collect(),
-        effort_values: usage
-            .effort_values
-            .iter()
-            .map(
-                |effort_value_usage| champions_interface::EffortValueUsageView {
-                    h: effort_value_usage.h,
-                    a: effort_value_usage.a,
-                    b: effort_value_usage.b,
-                    c: effort_value_usage.c,
-                    d: effort_value_usage.d,
-                    s: effort_value_usage.s,
-                    rate: effort_value_usage.rate.clone(),
-                },
-            )
-            .collect(),
-        natures: usage
-            .natures
-            .iter()
-            .map(|nature_usage| champions_interface::NatureUsageView {
-                name: nature_usage.name.clone(),
-                rate: nature_usage.rate.clone(),
-            })
-            .collect(),
-    }
 }

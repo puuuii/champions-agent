@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 use champions_application::ports::UsageRepository;
 use champions_infrastructure::config::AppPaths;
 use champions_infrastructure::persistence::{
@@ -156,4 +157,13 @@ fn build_recognition_port(
         cropper,
         usage_repo,
     ))
+=======
+mod capture;
+mod composition;
+mod services;
+mod ui;
+
+fn main() -> iced::Result {
+    composition::run()
+>>>>>>> 5
 }
