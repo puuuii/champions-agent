@@ -109,8 +109,8 @@ impl RuntimeBootstrap {
         let mut builder = RuntimeBuilder::new()
             .frame_source(Box::new(frame_source))
             .preview_converter(Box::new(preview_converter))
-            .preview_max_width(960)
-            .preview_target_fps(15);
+            .preview_max_width(1920)
+            .preview_target_fps(60);
 
         if let Some(recognition_port) = build_recognition_port(app_paths, usage_repo) {
             builder = builder.recognition_port(recognition_port);

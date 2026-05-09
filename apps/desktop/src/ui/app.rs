@@ -6,10 +6,11 @@ use champions_domain::party::SavedParty;
 use champions_interface::{
     ConflictView, OpponentPartyView, PokemonUsageSummaryView, RecognizedPokemonView, RuntimeEvent,
 };
+use champions_runtime::PreviewFrame;
 use iced::window;
 use iced::{
     Border, Color, Element, Length, Size, Subscription, Task,
-    widget::{button, column, container, image, row, scrollable, text, text_input},
+    widget::{button, column, container, row, scrollable, text, text_input},
 };
 
 use super::JAPANESE_FONT;
@@ -72,7 +73,7 @@ pub struct PokeEditorApp {
     active_tab: Tab,
     opponent_party: Option<OpponentPartyState>,
     services: DesktopAppServices,
-    latest_preview: Option<image::Handle>,
+    latest_preview: Option<PreviewFrame>,
     preview_window_id: Option<window::Id>,
     main_window_id: Option<window::Id>,
     is_refreshing: bool,
@@ -115,8 +116,8 @@ impl PokeEditorApp {
 
         let (preview_id, preview_task) = window::open(window::Settings {
             size: Size {
-                width: 960.0,
-                height: 540.0,
+                width: 1920.0,
+                height: 1080.0,
             },
             ..Default::default()
         });
@@ -163,7 +164,7 @@ impl PokeEditorApp {
             }
             Message::RuntimeMsg(runtime_msg) => match runtime_msg {
                 RuntimeMessage::PreviewFrameReceived(frame) => {
-                    self.latest_preview = Some(VideoPreview::handle_from_frame(&frame));
+                    self.latest_preview = Some(frame);
                 }
                 RuntimeMessage::RuntimeEventReceived(event) => {
                     self.handle_runtime_event(event);
