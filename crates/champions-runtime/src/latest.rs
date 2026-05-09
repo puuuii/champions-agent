@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use champions_interface::{CapturedFrame, PreviewFrame};
+use crate::frame::{CapturedFrame, PreviewFrame};
 
 #[derive(Clone)]
 pub struct Latest<T> {

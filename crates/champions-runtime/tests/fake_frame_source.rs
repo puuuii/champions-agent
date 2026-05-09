@@ -1,8 +1,11 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use champions_interface::{CapturedFrame, FrameSequence, ImageBuffer, PixelFormat, PreviewFrame};
-use champions_runtime::{CaptureError, FrameSource, PreviewFrameConverter};
+use champions_interface::FrameSequence;
+use champions_runtime::{
+    CaptureError, CapturedFrame, FrameSource, ImageBuffer, PixelFormat, PreviewFrame,
+    PreviewFrameConverter,
+};
 
 pub struct FakeFrameSource {
     width: u32,

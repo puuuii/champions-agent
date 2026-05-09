@@ -1,7 +1,8 @@
 use tokio::sync::mpsc;
 
-use champions_interface::{PreviewFrame, RuntimeCommand, RuntimeEvent};
+use champions_interface::{RuntimeCommand, RuntimeEvent};
 
+use crate::frame::PreviewFrame;
 use crate::latest::LatestPreview;
 
 pub struct RuntimeHandle {

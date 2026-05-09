@@ -1,5 +1,5 @@
-use champions_interface::{CapturedFrame, PixelFormat, PreviewFrame};
-use champions_runtime::traits::PreviewFrameConverter;
+use crate::frame::{CapturedFrame, PixelFormat, PreviewFrame};
+use crate::traits::PreviewFrameConverter;
 
 pub struct RgbaPreviewConverter;
 
@@ -43,10 +43,10 @@ fn to_rgba(src: &[u8], width: u32, height: u32, format: PixelFormat) -> Vec<u8> 
             for i in 0..pixel_count {
                 let si = i * 3;
                 let di = i * 4;
-                rgba[di] = src[si + 2]; // R
-                rgba[di + 1] = src[si + 1]; // G
-                rgba[di + 2] = src[si]; // B
-                rgba[di + 3] = 255; // A
+                rgba[di] = src[si + 2];
+                rgba[di + 1] = src[si + 1];
+                rgba[di + 2] = src[si];
+                rgba[di + 3] = 255;
             }
         }
         PixelFormat::Rgb8 => {

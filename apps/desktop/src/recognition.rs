@@ -8,13 +8,10 @@ use champions_application::{
     OcrImage, PartyImageSet, RecognitionConfig, RecognitionImageExtractor,
     SelectionDetectionResult, UsageRepository,
 };
+use champions_infrastructure::{MangaOcrEngine, OnnxPartyIdentifier, OpenCvCropper};
 use champions_runtime::RecognitionPort;
 
-use super::cropper::OpenCvCropper;
-use super::manga_ocr_engine::MangaOcrEngine;
-use super::onnx_party_identifier::OnnxPartyIdentifier;
-
-pub struct RecognitionAdapter {
+pub struct RecognitionRuntimePort {
     ocr_engine: MangaOcrEngine,
     party_identifier: OnnxPartyIdentifier,
     image_extractor: OpenCvCropper,
@@ -22,7 +19,7 @@ pub struct RecognitionAdapter {
     recognition_config: RecognitionConfig,
 }
 
-impl RecognitionAdapter {
+impl RecognitionRuntimePort {
     pub fn new(
         ocr_engine: MangaOcrEngine,
         party_identifier: OnnxPartyIdentifier,
@@ -39,7 +36,7 @@ impl RecognitionAdapter {
     }
 }
 
-impl RecognitionPort for RecognitionAdapter {
+impl RecognitionPort for RecognitionRuntimePort {
     fn detect_selection_screen(&self, image: OcrImage) -> Result<SelectionDetectionResult, String> {
         let use_case = DetectSelectionScreenUseCase::new(&self.ocr_engine);
         use_case

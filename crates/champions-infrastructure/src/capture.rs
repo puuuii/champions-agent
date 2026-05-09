@@ -1,3 +1,6 @@
-mod preview_converter;
+mod opencv_capture_device;
 
-pub use preview_converter::RgbaPreviewConverter;
+pub use opencv_capture_device::{
+    CaptureBackend, CaptureConfig, CaptureReadError, OpenCvCaptureDevice, RawFrame, RawImageBuffer,
+    RawPixelFormat,
+};

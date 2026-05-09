@@ -1,4 +1,4 @@
-use champions_interface::{CapturedFrame, PreviewFrame};
+use crate::frame::{CapturedFrame, PreviewFrame};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CaptureError {
