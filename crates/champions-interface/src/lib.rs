@@ -12,6 +12,6 @@ pub use recognition_view::{
     RecognizedPokemonView,
 };
 pub use types::{
-    CaptureStatus, CapturedFrame, EventSequence, FrameSequence, ImageBuffer, ImagePoint, ImageRect,
-    PixelFormat, PreviewFrame, RecognitionAttemptId, RecognitionStatus, RgbaColor,
+    CaptureStatus, CapturedFrame, EventSequence, FrameSequence, ImageBuffer, PixelFormat,
+    PreviewFrame, RecognitionAttemptId, RecognitionStatus,
 };
