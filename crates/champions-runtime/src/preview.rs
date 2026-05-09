@@ -16,12 +16,30 @@ impl PreviewFrameConverter for RgbaPreviewConverter {
             (src_w, src_h)
         };
 
-        let rgba_full = to_rgba(&src.bytes, src_w, src_h, src.pixel_format);
-
-        let rgba_scaled = if dst_w == src_w && dst_h == src_h {
-            rgba_full
-        } else {
-            nearest_neighbor_scale(&rgba_full, src_w, src_h, dst_w, dst_h)
+        let (pixel_format, pixels) = match src.pixel_format {
+            PixelFormat::Bgra8 | PixelFormat::Rgba8 if dst_w == src_w && dst_h == src_h => {
+                (src.pixel_format, src.bytes.clone())
+            }
+            PixelFormat::Bgra8 | PixelFormat::Rgba8 => {
+                let scaled = nearest_neighbor_scale(
+                    src.bytes.as_ref(),
+                    src_w,
+                    src_h,
+                    dst_w,
+                    dst_h,
+                    src.pixel_format.bytes_per_pixel(),
+                );
+                (src.pixel_format, scaled.into())
+            }
+            _ => {
+                let rgba_full = to_rgba(src.bytes.as_ref(), src_w, src_h, src.pixel_format);
+                let rgba_scaled = if dst_w == src_w && dst_h == src_h {
+                    rgba_full
+                } else {
+                    nearest_neighbor_scale(&rgba_full, src_w, src_h, dst_w, dst_h, 4)
+                };
+                (PixelFormat::Rgba8, rgba_scaled.into())
+            }
         };
 
         PreviewFrame {
@@ -29,7 +47,8 @@ impl PreviewFrameConverter for RgbaPreviewConverter {
             timestamp_millis: frame.captured_at_millis,
             width: dst_w,
             height: dst_h,
-            rgba: rgba_scaled.into(),
+            pixel_format,
+            pixels,
         }
     }
 }
@@ -48,6 +67,9 @@ fn to_rgba(src: &[u8], width: u32, height: u32, format: PixelFormat) -> Vec<u8> 
                 rgba[di + 2] = src[si];
                 rgba[di + 3] = 255;
             }
+        }
+        PixelFormat::Bgra8 => {
+            rgba[..pixel_count * 4].copy_from_slice(&src[..pixel_count * 4]);
         }
         PixelFormat::Rgb8 => {
             for i in 0..pixel_count {
@@ -76,8 +98,15 @@ fn to_rgba(src: &[u8], width: u32, height: u32, format: PixelFormat) -> Vec<u8> 
     rgba
 }
 
-fn nearest_neighbor_scale(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u8> {
-    let mut dst = vec![0u8; (dst_w as usize) * (dst_h as usize) * 4];
+fn nearest_neighbor_scale(
+    src: &[u8],
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+    channels: usize,
+) -> Vec<u8> {
+    let mut dst = vec![0u8; (dst_w as usize) * (dst_h as usize) * channels];
     let x_ratio = src_w as f64 / dst_w as f64;
     let y_ratio = src_h as f64 / dst_h as f64;
 
@@ -88,12 +117,60 @@ fn nearest_neighbor_scale(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h:
             let src_x = (x as f64 * x_ratio) as u32;
             let src_x = src_x.min(src_w - 1);
 
-            let si = ((src_y * src_w + src_x) as usize) * 4;
-            let di = ((y * dst_w + x) as usize) * 4;
+            let si = ((src_y * src_w + src_x) as usize) * channels;
+            let di = ((y * dst_w + x) as usize) * channels;
 
-            dst[di..di + 4].copy_from_slice(&src[si..si + 4]);
+            dst[di..di + channels].copy_from_slice(&src[si..si + channels]);
         }
     }
 
     dst
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RgbaPreviewConverter;
+    use crate::frame::{CapturedFrame, ImageBuffer, PixelFormat};
+    use crate::traits::PreviewFrameConverter;
+    use champions_interface::FrameSequence;
+    use std::sync::Arc;
+
+    #[test]
+    fn bgra_frame_without_scaling_reuses_source_pixels() {
+        let pixels: Arc<[u8]> = vec![1, 2, 3, 255, 4, 5, 6, 255].into();
+        let frame = CapturedFrame {
+            frame_sequence: FrameSequence(7),
+            captured_at_millis: 123,
+            image: ImageBuffer {
+                width: 2,
+                height: 1,
+                pixel_format: PixelFormat::Bgra8,
+                bytes: pixels.clone(),
+            },
+        };
+
+        let preview = RgbaPreviewConverter.convert(&frame, 1920);
+
+        assert_eq!(preview.pixel_format, PixelFormat::Bgra8);
+        assert!(Arc::ptr_eq(&preview.pixels, &pixels));
+    }
+
+    #[test]
+    fn bgr_frame_converts_to_rgba() {
+        let frame = CapturedFrame {
+            frame_sequence: FrameSequence(1),
+            captured_at_millis: 0,
+            image: ImageBuffer {
+                width: 1,
+                height: 1,
+                pixel_format: PixelFormat::Bgr8,
+                bytes: vec![10, 20, 30].into(),
+            },
+        };
+
+        let preview = RgbaPreviewConverter.convert(&frame, 1920);
+
+        assert_eq!(preview.pixel_format, PixelFormat::Rgba8);
+        assert_eq!(preview.pixels.as_ref(), &[30, 20, 10, 255]);
+    }
 }

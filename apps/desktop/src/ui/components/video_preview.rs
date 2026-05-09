@@ -1,4 +1,4 @@
-use champions_runtime::PreviewFrame;
+use champions_runtime::{PixelFormat, PreviewFrame};
 use iced::widget::container;
 use iced::widget::shader::{
     Pipeline as ShaderPipeline, Primitive as ShaderPrimitive, Program as ShaderProgram,
@@ -65,7 +65,8 @@ struct PreviewUpload {
     sequence: u64,
     width: u32,
     height: u32,
-    rgba: Arc<[u8]>,
+    pixel_format: PixelFormat,
+    pixels: Arc<[u8]>,
 }
 
 impl PreviewUpload {
@@ -74,7 +75,8 @@ impl PreviewUpload {
             sequence: frame.frame_sequence.0,
             width: frame.width,
             height: frame.height,
-            rgba: frame.rgba.clone(),
+            pixel_format: frame.pixel_format,
+            pixels: frame.pixels.clone(),
         }
     }
 }
@@ -85,7 +87,8 @@ impl fmt::Debug for PreviewUpload {
             .field("sequence", &self.sequence)
             .field("width", &self.width)
             .field("height", &self.height)
-            .field("rgba_len", &self.rgba.len())
+            .field("pixel_format", &self.pixel_format)
+            .field("pixels_len", &self.pixels.len())
             .finish()
     }
 }
@@ -145,6 +148,7 @@ struct PreviewTexture {
     _view: wgpu::TextureView,
     width: u32,
     height: u32,
+    pixel_format: PixelFormat,
 }
 
 impl ShaderPipeline for PreviewPipeline {
@@ -278,8 +282,13 @@ impl PreviewPipeline {
             return;
         }
 
-        let expected_len = upload.width as usize * upload.height as usize * 4;
-        if upload.rgba.len() != expected_len {
+        let expected_len =
+            upload.width as usize * upload.height as usize * upload.pixel_format.bytes_per_pixel();
+        if upload.pixels.len() != expected_len {
+            return;
+        }
+
+        if texture_format(upload.pixel_format).is_none() {
             return;
         }
 
@@ -301,10 +310,10 @@ impl PreviewPipeline {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            upload.rgba.as_ref(),
+            upload.pixels.as_ref(),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(upload.width * 4),
+                bytes_per_row: Some(upload.width * upload.pixel_format.bytes_per_pixel() as u32),
                 rows_per_image: Some(upload.height),
             },
             wgpu::Extent3d {
@@ -319,12 +328,18 @@ impl PreviewPipeline {
 
     fn ensure_texture(&mut self, device: &wgpu::Device, upload: &PreviewUpload) {
         let reuse_texture = self.texture.as_ref().is_some_and(|texture| {
-            texture.width == upload.width && texture.height == upload.height
+            texture.width == upload.width
+                && texture.height == upload.height
+                && texture.pixel_format == upload.pixel_format
         });
 
         if reuse_texture {
             return;
         }
+
+        let Some(format) = texture_format(upload.pixel_format) else {
+            return;
+        };
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("champions.preview.texture"),
@@ -336,7 +351,7 @@ impl PreviewPipeline {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -366,6 +381,7 @@ impl PreviewPipeline {
             _view: view,
             width: upload.width,
             height: upload.height,
+            pixel_format: upload.pixel_format,
         });
         self.bind_group = Some(bind_group);
         self.uploaded_sequence = None;
@@ -398,4 +414,12 @@ fn preview_uniform_bytes(
     }
 
     bytes
+}
+
+fn texture_format(pixel_format: PixelFormat) -> Option<wgpu::TextureFormat> {
+    match pixel_format {
+        PixelFormat::Rgba8 => Some(wgpu::TextureFormat::Rgba8Unorm),
+        PixelFormat::Bgra8 => Some(wgpu::TextureFormat::Bgra8Unorm),
+        _ => None,
+    }
 }

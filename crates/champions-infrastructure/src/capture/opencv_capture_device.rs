@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use opencv::{core, prelude::*, videoio};
+use opencv::{core, imgproc, prelude::*, videoio};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureBackend {
@@ -40,6 +40,7 @@ impl Default for CaptureConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RawPixelFormat {
     Bgr8,
+    Bgra8,
     Rgb8,
     Rgba8,
     Gray8,
@@ -70,6 +71,7 @@ pub enum CaptureReadError {
 pub struct OpenCvCaptureDevice {
     capture: videoio::VideoCapture,
     frame_buf: core::Mat,
+    bgra_buf: core::Mat,
 }
 
 impl OpenCvCaptureDevice {
@@ -93,6 +95,7 @@ impl OpenCvCaptureDevice {
         Ok(Self {
             capture,
             frame_buf: core::Mat::default(),
+            bgra_buf: core::Mat::default(),
         })
     }
 
@@ -106,13 +109,43 @@ impl OpenCvCaptureDevice {
             return Ok(None);
         }
 
-        let rows = self.frame_buf.rows() as u32;
-        let cols = self.frame_buf.cols() as u32;
-        let channels = self.frame_buf.channels() as usize;
+        let source_channels = self.frame_buf.channels() as usize;
+
+        let (frame_buf, pixel_format) = match source_channels {
+            3 => {
+                imgproc::cvt_color(
+                    &self.frame_buf,
+                    &mut self.bgra_buf,
+                    imgproc::COLOR_BGR2BGRA,
+                    0,
+                )
+                .map_err(|e| CaptureReadError::ReadFailed(e.to_string()))?;
+                (&self.bgra_buf, RawPixelFormat::Bgra8)
+            }
+            4 => (&self.frame_buf, RawPixelFormat::Bgra8),
+            1 => {
+                imgproc::cvt_color(
+                    &self.frame_buf,
+                    &mut self.bgra_buf,
+                    imgproc::COLOR_GRAY2BGRA,
+                    0,
+                )
+                .map_err(|e| CaptureReadError::ReadFailed(e.to_string()))?;
+                (&self.bgra_buf, RawPixelFormat::Bgra8)
+            }
+            _ => {
+                return Err(CaptureReadError::ReadFailed(format!(
+                    "unsupported channel count: {source_channels}"
+                )));
+            }
+        };
+
+        let rows = frame_buf.rows() as u32;
+        let cols = frame_buf.cols() as u32;
+        let channels = frame_buf.channels() as usize;
 
         let expected_len = (rows as usize) * (cols as usize) * channels;
-        let data = self
-            .frame_buf
+        let data = frame_buf
             .data_bytes()
             .map_err(|e| CaptureReadError::ReadFailed(format!("failed to access Mat data: {e}")))?;
 
@@ -121,17 +154,6 @@ impl OpenCvCaptureDevice {
                 "Mat data size mismatch".to_string(),
             ));
         }
-
-        let pixel_format = match channels {
-            3 => RawPixelFormat::Bgr8,
-            4 => RawPixelFormat::Rgba8,
-            1 => RawPixelFormat::Gray8,
-            _ => {
-                return Err(CaptureReadError::ReadFailed(format!(
-                    "unsupported channel count: {channels}"
-                )));
-            }
-        };
 
         let now_millis = SystemTime::now()
             .duration_since(UNIX_EPOCH)

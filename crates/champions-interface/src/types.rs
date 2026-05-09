@@ -34,6 +34,7 @@ pub struct RgbaColor {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PixelFormat {
     Bgr8,
+    Bgra8,
     Rgb8,
     Rgba8,
     Gray8,
@@ -43,7 +44,7 @@ impl PixelFormat {
     pub fn bytes_per_pixel(&self) -> usize {
         match self {
             Self::Bgr8 | Self::Rgb8 => 3,
-            Self::Rgba8 => 4,
+            Self::Bgra8 | Self::Rgba8 => 4,
             Self::Gray8 => 1,
         }
     }
@@ -70,7 +71,8 @@ pub struct PreviewFrame {
     pub timestamp_millis: u64,
     pub width: u32,
     pub height: u32,
-    pub rgba: Arc<[u8]>,
+    pub pixel_format: PixelFormat,
+    pub pixels: Arc<[u8]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

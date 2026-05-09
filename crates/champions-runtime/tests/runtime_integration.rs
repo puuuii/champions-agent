@@ -71,8 +71,8 @@ async fn capture_produces_preview_frames() {
 
     assert!(preview.width <= 960);
     assert_eq!(
-        preview.rgba.len(),
-        (preview.width * preview.height * 4) as usize
+        preview.pixels.len(),
+        (preview.width * preview.height * preview.pixel_format.bytes_per_pixel() as u32) as usize
     );
 
     handle.send(RuntimeCommand::Shutdown).await.unwrap();

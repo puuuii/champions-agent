@@ -20,3 +20,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+
+[profile.dev.package."champions-runtime"]
+opt-level = 3
+
+[profile.dev.package."champions-infrastructure"]
+opt-level = 3
+
+[profile.dev.package."champions-agent-desktop"]
+opt-level = 2

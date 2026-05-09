@@ -63,14 +63,15 @@ impl PreviewFrameConverter for FakePreviewConverter {
         let out_w = (frame.image.width as f64 * scale) as u32;
         let out_h = (frame.image.height as f64 * scale) as u32;
         let pixel_count = (out_w * out_h * 4) as usize;
-        let rgba: Arc<[u8]> = vec![200u8; pixel_count].into();
+        let pixels: Arc<[u8]> = vec![200u8; pixel_count].into();
 
         PreviewFrame {
             frame_sequence: frame.frame_sequence,
             timestamp_millis: frame.captured_at_millis,
             width: out_w,
             height: out_h,
-            rgba,
+            pixel_format: PixelFormat::Rgba8,
+            pixels,
         }
     }
 }

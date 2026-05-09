@@ -13,7 +13,7 @@ serde_json.workspace = true
 tracing.workspace = true
 csv = "1.3"
 image = "0.25"
-opencv = { version = "0.98.2", features = ["videoio"] }
+opencv = { version = "0.98.2", features = ["videoio", "imgproc"] }
 manga-ocr-rs = "0.1.3"
 ort = { version = "=2.0.0-rc.12", features = ["cuda"] }
 ndarray = "0.17"

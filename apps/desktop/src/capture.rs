@@ -42,6 +42,7 @@ fn map_frame(frame: RawFrame) -> CapturedFrame {
 fn map_pixel_format(format: RawPixelFormat) -> PixelFormat {
     match format {
         RawPixelFormat::Bgr8 => PixelFormat::Bgr8,
+        RawPixelFormat::Bgra8 => PixelFormat::Bgra8,
         RawPixelFormat::Rgb8 => PixelFormat::Rgb8,
         RawPixelFormat::Rgba8 => PixelFormat::Rgba8,
         RawPixelFormat::Gray8 => PixelFormat::Gray8,
