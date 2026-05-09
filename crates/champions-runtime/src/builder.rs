@@ -12,12 +12,12 @@ use tokio::sync::mpsc;
 use champions_interface::{
     CandidateView, ConfidenceView, ConflictView, EffortValueUsageView, EventSequence,
     FrameSequence, ItemUsageView, MoveUsageView, NatureUsageView, OpponentPartyView,
-    PokemonUsageSummaryView, PreviewFrame, RecognitionAttemptId, RecognizedPokemonView,
-    RuntimeCommand, RuntimeEvent,
+    PokemonUsageSummaryView, RecognitionAttemptId, RecognizedPokemonView, RuntimeCommand,
+    RuntimeEvent,
 };
 
 use crate::handle::RuntimeHandle;
-use crate::latest::LatestFrame;
+use crate::latest::{LatestFrame, LatestPreview};
 use crate::recognition::RecognitionPort;
 use crate::scheduler::RecognitionScheduler;
 use crate::shutdown::{ShutdownSignal, ShutdownToken, shutdown_pair};
@@ -79,12 +79,18 @@ impl RuntimeBuilder {
 
         let (command_tx, command_rx) = mpsc::channel(COMMAND_CHANNEL_SIZE);
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_SIZE);
-        let (preview_tx, preview_rx) = mpsc::channel(PREVIEW_CHANNEL_SIZE);
+        let (preview_notify_tx, preview_notify_rx) = mpsc::channel(PREVIEW_CHANNEL_SIZE);
         let (shutdown_signal, shutdown_token) = shutdown_pair();
 
         let latest_frame = LatestFrame::new();
+        let latest_preview = LatestPreview::new();
 
-        let handle = RuntimeHandle::new(command_tx, event_rx, preview_rx);
+        let handle = RuntimeHandle::new(
+            command_tx,
+            event_rx,
+            preview_notify_rx,
+            latest_preview.clone(),
+        );
 
         let workers = RuntimeWorkers {
             frame_source,
@@ -92,10 +98,11 @@ impl RuntimeBuilder {
             recognition_port: self.recognition_port,
             command_rx,
             event_tx,
-            preview_tx,
+            preview_notify_tx,
             shutdown_signal,
             shutdown_token,
             latest_frame,
+            latest_preview,
             preview_max_width: self.preview_max_width,
             preview_target_fps: self.preview_target_fps,
         };
@@ -116,10 +123,11 @@ pub struct RuntimeWorkers {
     recognition_port: Option<Box<dyn RecognitionPort>>,
     command_rx: mpsc::Receiver<RuntimeCommand>,
     event_tx: mpsc::Sender<RuntimeEvent>,
-    preview_tx: mpsc::Sender<PreviewFrame>,
+    preview_notify_tx: mpsc::Sender<()>,
     shutdown_signal: ShutdownSignal,
     shutdown_token: ShutdownToken,
     latest_frame: LatestFrame,
+    latest_preview: LatestPreview,
     preview_max_width: u32,
     preview_target_fps: u8,
 }
@@ -132,10 +140,11 @@ impl RuntimeWorkers {
             recognition_port,
             mut command_rx,
             event_tx,
-            preview_tx,
+            preview_notify_tx,
             shutdown_signal,
             shutdown_token,
             latest_frame,
+            latest_preview,
             preview_max_width,
             preview_target_fps,
         } = self;
@@ -158,7 +167,8 @@ impl RuntimeWorkers {
         let preview_worker = PreviewWorker {
             preview_converter,
             latest_frame: latest_frame.clone(),
-            preview_tx,
+            latest_preview,
+            preview_notify_tx,
             control: control.clone(),
             shutdown_token: shutdown_token.clone(),
         }
@@ -340,7 +350,8 @@ impl CaptureWorker {
 struct PreviewWorker {
     preview_converter: Box<dyn PreviewFrameConverter>,
     latest_frame: LatestFrame,
-    preview_tx: mpsc::Sender<PreviewFrame>,
+    latest_preview: LatestPreview,
+    preview_notify_tx: mpsc::Sender<()>,
     control: Arc<RuntimeControl>,
     shutdown_token: ShutdownToken,
 }
@@ -364,7 +375,8 @@ impl PreviewWorker {
                     let preview = self
                         .preview_converter
                         .convert(&frame, self.control.preview_max_width());
-                    let _ = self.preview_tx.try_send(preview);
+                    self.latest_preview.store(preview);
+                    let _ = self.preview_notify_tx.try_send(());
                     last_previewed_frame_seq = Some(frame.frame_sequence);
                 }
             }

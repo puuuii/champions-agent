@@ -1,37 +1,42 @@
 use std::sync::{Arc, Mutex};
 
-use champions_interface::CapturedFrame;
+use champions_interface::{CapturedFrame, PreviewFrame};
 
 #[derive(Clone)]
-pub struct LatestFrame {
-    inner: Arc<Mutex<Option<CapturedFrame>>>,
+pub struct Latest<T> {
+    inner: Arc<Mutex<Option<T>>>,
 }
 
-impl LatestFrame {
+impl<T> Latest<T> {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(None)),
         }
     }
 
-    pub fn store(&self, frame: CapturedFrame) {
+    pub fn store(&self, value: T) {
         let mut slot = self.inner.lock().unwrap();
-        *slot = Some(frame);
+        *slot = Some(value);
     }
 
-    pub fn take(&self) -> Option<CapturedFrame> {
+    pub fn take(&self) -> Option<T> {
         let mut slot = self.inner.lock().unwrap();
         slot.take()
     }
+}
 
-    pub fn peek(&self) -> Option<CapturedFrame> {
+impl<T: Clone> Latest<T> {
+    pub fn peek(&self) -> Option<T> {
         let slot = self.inner.lock().unwrap();
         slot.clone()
     }
 }
 
-impl Default for LatestFrame {
+impl<T> Default for Latest<T> {
     fn default() -> Self {
         Self::new()
     }
 }
+
+pub type LatestFrame = Latest<CapturedFrame>;
+pub type LatestPreview = Latest<PreviewFrame>;

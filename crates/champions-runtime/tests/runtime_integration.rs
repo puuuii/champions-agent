@@ -12,7 +12,7 @@ use champions_application::{
     OcrImage, PartyImageSet, SelectionDetectionResult, use_cases::OpponentPartyIdentificationResult,
 };
 use champions_domain::recognition::{RecognizedParty, ScreenState};
-use champions_interface::{CaptureStatus, RuntimeCommand, RuntimeEvent};
+use champions_interface::{CaptureStatus, FrameSequence, RuntimeCommand, RuntimeEvent};
 use champions_runtime::{RecognitionPort, RuntimeBuilder};
 use fake_frame_source::{FakeFrameSource, FakePreviewConverter};
 
@@ -64,7 +64,7 @@ async fn capture_produces_preview_frames() {
         }
     ));
 
-    let preview = tokio::time::timeout(std::time::Duration::from_secs(2), handle.next_preview())
+    let preview = tokio::time::timeout(Duration::from_secs(2), handle.next_preview())
         .await
         .expect("timed out waiting for preview")
         .expect("preview channel closed");
@@ -116,6 +116,37 @@ async fn stop_capture_sends_status_event() {
             ..
         }
     ));
+
+    handle.send(RuntimeCommand::Shutdown).await.unwrap();
+    worker_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn preview_backpressure_keeps_latest_frame() {
+    let source = FakeFrameSource::new(640, 480, 10);
+    let converter = FakePreviewConverter;
+
+    let (mut handle, workers) = RuntimeBuilder::new()
+        .frame_source(Box::new(source))
+        .preview_converter(Box::new(converter))
+        .preview_target_fps(100)
+        .build();
+
+    let worker_task = tokio::spawn(async move {
+        workers.run().await;
+    });
+
+    handle.send(RuntimeCommand::StartCapture).await.unwrap();
+    let _ = handle.next_event().await;
+
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    let preview = tokio::time::timeout(Duration::from_secs(1), handle.next_preview())
+        .await
+        .expect("timed out waiting for preview")
+        .expect("preview channel closed");
+
+    assert_eq!(preview.frame_sequence, FrameSequence(10));
 
     handle.send(RuntimeCommand::Shutdown).await.unwrap();
     worker_task.await.unwrap();

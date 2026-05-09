@@ -2,22 +2,25 @@ use tokio::sync::mpsc;
 
 use champions_interface::{PreviewFrame, RuntimeCommand, RuntimeEvent};
 
+use crate::latest::LatestPreview;
+
 pub struct RuntimeHandle {
     command_tx: mpsc::Sender<RuntimeCommand>,
     event_rx: mpsc::Receiver<RuntimeEvent>,
-    preview_rx: mpsc::Receiver<PreviewFrame>,
+    preview_rx: PreviewReceiver,
 }
 
 impl RuntimeHandle {
     pub(crate) fn new(
         command_tx: mpsc::Sender<RuntimeCommand>,
         event_rx: mpsc::Receiver<RuntimeEvent>,
-        preview_rx: mpsc::Receiver<PreviewFrame>,
+        preview_notify_rx: mpsc::Receiver<()>,
+        latest_preview: LatestPreview,
     ) -> Self {
         Self {
             command_tx,
             event_rx,
-            preview_rx,
+            preview_rx: PreviewReceiver::new(preview_notify_rx, latest_preview),
         }
     }
 
@@ -33,11 +36,11 @@ impl RuntimeHandle {
     }
 
     pub async fn next_preview(&mut self) -> Option<PreviewFrame> {
-        self.preview_rx.recv().await
+        self.preview_rx.next().await
     }
 
     pub fn try_next_preview(&mut self) -> Option<PreviewFrame> {
-        self.preview_rx.try_recv().ok()
+        self.preview_rx.try_next()
     }
 
     pub fn split(self) -> (CommandSender, EventReceiver, PreviewReceiver) {
@@ -48,9 +51,7 @@ impl RuntimeHandle {
             EventReceiver {
                 event_rx: self.event_rx,
             },
-            PreviewReceiver {
-                preview_rx: self.preview_rx,
-            },
+            self.preview_rx,
         )
     }
 }
@@ -80,12 +81,43 @@ impl EventReceiver {
 }
 
 pub struct PreviewReceiver {
-    preview_rx: mpsc::Receiver<PreviewFrame>,
+    preview_notify_rx: mpsc::Receiver<()>,
+    latest_preview: LatestPreview,
 }
 
 impl PreviewReceiver {
+    pub(crate) fn new(
+        preview_notify_rx: mpsc::Receiver<()>,
+        latest_preview: LatestPreview,
+    ) -> Self {
+        Self {
+            preview_notify_rx,
+            latest_preview,
+        }
+    }
+
     pub async fn next(&mut self) -> Option<PreviewFrame> {
-        self.preview_rx.recv().await
+        loop {
+            self.preview_notify_rx.recv().await?;
+            self.drain_pending_notifications();
+
+            if let Some(frame) = self.latest_preview.take() {
+                return Some(frame);
+            }
+        }
+    }
+
+    pub fn try_next(&mut self) -> Option<PreviewFrame> {
+        if self.preview_notify_rx.try_recv().is_err() {
+            return None;
+        }
+
+        self.drain_pending_notifications();
+        self.latest_preview.take()
+    }
+
+    fn drain_pending_notifications(&mut self) {
+        while self.preview_notify_rx.try_recv().is_ok() {}
     }
 }
 
