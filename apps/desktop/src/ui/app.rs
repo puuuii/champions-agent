@@ -11,8 +11,8 @@ use champions_application::use_cases::{
 };
 use champions_domain::{party::SavedParty, usage::PokemonUsageSummary};
 use champions_interface::{
-    CandidateView, ConflictView, OpponentPartyView, PokemonUsageSummaryView, PreviewFrame,
-    RecognizedPokemonView, RuntimeEvent,
+    ConflictView, OpponentPartyView, PokemonUsageSummaryView, PreviewFrame, RecognizedPokemonView,
+    RuntimeEvent,
 };
 use champions_runtime::CommandSender;
 use iced::window;
@@ -54,7 +54,6 @@ struct OpponentPokemonState {
     slot_index: u8,
     input_name: String,
     recognized_name: Option<String>,
-    candidates: Vec<CandidateView>,
     usage: Option<PokemonUsageSummaryView>,
     suggestions: Vec<String>,
 }
@@ -72,7 +71,6 @@ impl OpponentPokemonState {
             slot_index: pokemon.slot_index,
             input_name,
             recognized_name: pokemon.display_name,
-            candidates: pokemon.candidates,
             usage: pokemon.usage,
             suggestions: Vec::new(),
         }
@@ -676,28 +674,13 @@ impl PokeEditorApp {
     }
 }
 
-fn format_slot_name(pokemon: &RecognizedPokemonView) -> String {
-    let display_name = pokemon
-        .usage
-        .as_ref()
-        .map(|usage| usage.name.as_str())
-        .or(pokemon.display_name.as_deref())
-        .unwrap_or("未判定");
-
-    let mut lines = vec![format!("#{} {}", pokemon.slot_index + 1, display_name)];
-
-    if pokemon.display_name.is_none() {
-        if let Some(candidates) = format_candidate_summary(pokemon) {
-            lines.push(candidates);
+fn format_opponent_hint(pokemon: &OpponentPokemonState) -> Option<String> {
+    if let Some(recognized) = &pokemon.recognized_name {
+        if recognized != &pokemon.input_name {
+            return Some(format!("認識: {}", recognized));
         }
     }
-
-    lines.join("\n")
-}
-
-fn format_candidate_summary(pokemon: &OpponentPokemonState) -> Option<String> {
-    let candidate = pokemon.candidates.first()?;
-    Some(format!("候補: {}", candidate.display_name))
+    None
 }
 
 fn format_conflict_summary(conflicts: &[ConflictView]) -> Option<String> {

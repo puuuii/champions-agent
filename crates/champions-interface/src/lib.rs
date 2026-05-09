@@ -1,3 +1,4 @@
+// Dummy comment to force rebuild
 pub mod command;
 pub mod event;
 pub mod recognition_view;

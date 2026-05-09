@@ -7,7 +7,6 @@ use champions_infrastructure::{
     GameWithUsageFetcher, MangaOcrEngine, OnnxPartyIdentifier, OpenCvCropper, RecognitionAdapter,
 };
 use champions_runtime::RuntimeBuilder;
-use iced::Size;
 use std::sync::Arc;
 
 mod capture;
