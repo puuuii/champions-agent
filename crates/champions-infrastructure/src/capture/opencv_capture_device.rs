@@ -118,6 +118,7 @@ impl OpenCvCaptureDevice {
                     &mut self.bgra_buf,
                     imgproc::COLOR_BGR2BGRA,
                     0,
+                    core::AlgorithmHint::ALGO_HINT_DEFAULT,
                 )
                 .map_err(|e| CaptureReadError::ReadFailed(e.to_string()))?;
                 (&self.bgra_buf, RawPixelFormat::Bgra8)
@@ -129,6 +130,7 @@ impl OpenCvCaptureDevice {
                     &mut self.bgra_buf,
                     imgproc::COLOR_GRAY2BGRA,
                     0,
+                    core::AlgorithmHint::ALGO_HINT_DEFAULT,
                 )
                 .map_err(|e| CaptureReadError::ReadFailed(e.to_string()))?;
                 (&self.bgra_buf, RawPixelFormat::Bgra8)
