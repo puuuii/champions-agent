@@ -573,6 +573,7 @@ async fn run_command_loop(
                 })
                 .await;
             }
+            RuntimeCommand::StartRecognition => {}
             RuntimeCommand::SetPreviewEnabled(enabled) => {
                 control.set_preview_enabled(enabled);
             }
@@ -582,7 +583,6 @@ async fn run_command_loop(
             RuntimeCommand::SetPreviewTargetFps(preview_target_fps) => {
                 control.set_preview_target_fps(preview_target_fps);
             }
-            _ => {}
         }
     }
 

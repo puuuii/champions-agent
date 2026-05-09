@@ -1,6 +1,6 @@
 use crate::recognition_view::OpponentPartyView;
 use crate::types::{
-    CaptureStatus, EventSequence, FrameSequence, RecognitionAttemptId, RecognitionStatus, RgbaColor,
+    CaptureStatus, EventSequence, FrameSequence, RecognitionAttemptId, RecognitionStatus,
 };
 
 #[derive(Debug, Clone)]
@@ -18,11 +18,6 @@ pub enum RuntimeEvent {
         frame_sequence: FrameSequence,
         attempt_id: RecognitionAttemptId,
         party: OpponentPartyView,
-    },
-    PixelSampled {
-        event_sequence: EventSequence,
-        frame_sequence: FrameSequence,
-        color: RgbaColor,
     },
     Error {
         event_sequence: EventSequence,
