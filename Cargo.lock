@@ -579,7 +579,6 @@ dependencies = [
  "champions-interface",
  "champions-runtime",
  "iced",
- "opencv",
  "tokio",
 ]
 
@@ -606,13 +605,12 @@ dependencies = [
  "anyhow",
  "champions-application",
  "champions-domain",
- "champions-interface",
- "champions-runtime",
  "csv",
  "image",
  "indexmap",
  "manga-ocr-rs",
  "ndarray",
+ "opencv",
  "ort",
  "rayon",
  "regex",

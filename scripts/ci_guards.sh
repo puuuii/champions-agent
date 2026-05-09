@@ -36,6 +36,15 @@ else
     echo "  OK"
 fi
 
+echo "  Checking champions-infrastructure..."
+if cargo tree -p champions-infrastructure 2>/dev/null | grep -qE "champions-runtime|champions-interface|iced"; then
+    echo "  FAIL: champions-infrastructure has forbidden dependencies"
+    cargo tree -p champions-infrastructure | grep -E "champions-runtime|champions-interface|iced"
+    ERRORS=$((ERRORS + 1))
+else
+    echo "  OK"
+fi
+
 echo ""
 echo "=== UI Import Guard ==="
 
@@ -62,6 +71,7 @@ echo ""
 echo "=== Mat Leak Guard ==="
 
 MAT_LEAK_DIRS=(
+    "apps/desktop"
     "crates/champions-domain"
     "crates/champions-application"
     "crates/champions-interface"

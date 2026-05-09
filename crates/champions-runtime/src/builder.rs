@@ -16,6 +16,7 @@ use champions_interface::{
     RuntimeEvent,
 };
 
+use crate::frame::CapturedFrame;
 use crate::handle::RuntimeHandle;
 use crate::latest::{LatestFrame, LatestPreview};
 use crate::recognition::RecognitionPort;
@@ -324,7 +325,7 @@ impl CaptureWorker {
 
             match self.frame_source.read_frame() {
                 Ok(Some(frame)) => {
-                    let frame = champions_interface::CapturedFrame {
+                    let frame = CapturedFrame {
                         frame_sequence: self.frame_seq.next(),
                         ..frame
                     };

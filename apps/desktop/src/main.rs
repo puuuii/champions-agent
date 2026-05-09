@@ -1,18 +1,20 @@
-use champions_infrastructure::RgbaPreviewConverter;
+use champions_application::ports::UsageRepository;
 use champions_infrastructure::config::AppPaths;
 use champions_infrastructure::persistence::{
     CsvCatalogRepository, JsonPartyRepository, JsonUsageRepository,
 };
 use champions_infrastructure::{
-    GameWithUsageFetcher, MangaOcrEngine, OnnxPartyIdentifier, OpenCvCropper, RecognitionAdapter,
+    GameWithUsageFetcher, MangaOcrEngine, OnnxPartyIdentifier, OpenCvCropper,
 };
-use champions_runtime::RuntimeBuilder;
+use champions_runtime::{RgbaPreviewConverter, RuntimeBuilder};
 use std::sync::Arc;
 
 mod capture;
+mod recognition;
 pub mod ui;
 
 use capture::{CaptureConfig, OpenCvFrameSource};
+use recognition::RecognitionRuntimePort;
 use ui::app::PokeEditorApp;
 
 fn main() -> iced::Result {
@@ -128,8 +130,8 @@ fn build_recognition_port(
     onnx_path: &std::path::Path,
     ocr_model_dir: &std::path::Path,
     master_img_dir: &std::path::Path,
-    usage_repo: Arc<JsonUsageRepository>,
-) -> Option<RecognitionAdapter> {
+    usage_repo: Arc<dyn UsageRepository>,
+) -> Option<RecognitionRuntimePort> {
     let ocr_engine = match MangaOcrEngine::new(ocr_model_dir) {
         Ok(engine) => engine,
         Err(e) => {
@@ -148,7 +150,7 @@ fn build_recognition_port(
 
     let cropper = OpenCvCropper::new();
 
-    Some(RecognitionAdapter::new(
+    Some(RecognitionRuntimePort::new(
         ocr_engine,
         party_identifier,
         cropper,

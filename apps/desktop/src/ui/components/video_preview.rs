@@ -1,4 +1,4 @@
-use champions_interface::PreviewFrame;
+use champions_runtime::PreviewFrame;
 use iced::widget::{container, image};
 use iced::{ContentFit, Element, Length};
 

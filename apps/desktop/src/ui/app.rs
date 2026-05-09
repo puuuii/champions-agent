@@ -11,10 +11,9 @@ use champions_application::use_cases::{
 };
 use champions_domain::{party::SavedParty, usage::PokemonUsageSummary};
 use champions_interface::{
-    ConflictView, OpponentPartyView, PokemonUsageSummaryView, PreviewFrame, RecognizedPokemonView,
-    RuntimeEvent,
+    ConflictView, OpponentPartyView, PokemonUsageSummaryView, RecognizedPokemonView, RuntimeEvent,
 };
-use champions_runtime::CommandSender;
+use champions_runtime::{CommandSender, PreviewFrame};
 use iced::window;
 use iced::{
     Border, Color, Element, Length, Size, Subscription, Task,
