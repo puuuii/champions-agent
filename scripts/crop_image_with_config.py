@@ -15,14 +15,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-INPUT_IMAGE_PATH = Path("debug/input.png")
-OUTPUT_IMAGE_PATH = Path("debug/output.png")
+INPUT_IMAGE_PATH = Path("F:\download\capture.png")
+OUTPUT_IMAGE_PATH = Path("F:\download\capture_out.png")
 CROP_INDEX = 0
 CROP_CONFIG: dict[str, float] = {
-    "center_x": 0.5,
-    "y_start": 0.04,
+    "center_x": 0.51,
+    "y_start": 0.65,
     "y_gap": 0.0,
-    "size_w": 0.04,
+    "size_w": 0.13,
     "width_ratio": 6.0,
 }
 
