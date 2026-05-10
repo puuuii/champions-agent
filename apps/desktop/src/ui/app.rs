@@ -324,7 +324,8 @@ impl PokeEditorApp {
     fn save_pokemon(&mut self, index: usize) {
         let build = self.pokemons[index].to_build();
         if build.is_blank() {
-            self.pokemon_feedbacks[index] = Some("内容が空のため保存されません".to_string());
+            self.pokemon_feedbacks[index] = None;
+            self.editor_status = Some(format!("ポケモン{}は未入力のため保存できません", index + 1));
             return;
         }
 
@@ -333,10 +334,17 @@ impl PokeEditorApp {
             saved_party.pokemons.resize(index + 1, Default::default());
         }
         saved_party.pokemons[index] = build.clone();
-        saved_party.remember_pokemon(build);
+        let is_duplicate_in_library = saved_party.has_saved_pokemon_equivalent(&build);
+        if !is_duplicate_in_library {
+            saved_party.remember_pokemon(build);
+        }
 
         if self.persist_saved_party(saved_party).is_ok() {
-            self.pokemon_feedbacks[index] = None;
+            self.pokemon_feedbacks[index] = if is_duplicate_in_library {
+                Some("一覧に同じ内容があるため保存しませんでした".to_string())
+            } else {
+                None
+            };
         }
     }
 
@@ -526,6 +534,12 @@ impl PokeEditorApp {
         }
 
         let mut saved_party = self.saved_party.clone();
+        if saved_party.has_saved_pokemon_equivalent_except(&build, history_index) {
+            if let Some(window_state) = self.restore_window.as_mut() {
+                window_state.feedback = Some("一覧に同じ内容があるため保存できません".to_string());
+            }
+            return;
+        }
         let Some(saved_pokemon) = saved_party.saved_pokemons.get_mut(history_index) else {
             if let Some(window_state) = self.restore_window.as_mut() {
                 window_state.feedback = Some("保存対象が見つかりません".to_string());
