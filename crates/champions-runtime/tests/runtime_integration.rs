@@ -12,7 +12,7 @@ use champions_application::{
     OcrImage, PartyImageSet, SelectionDetectionResult, use_cases::OpponentPartyIdentificationResult,
 };
 use champions_domain::recognition::{RecognizedParty, ScreenState};
-use champions_interface::{CaptureStatus, FrameSequence, RuntimeCommand, RuntimeEvent};
+use champions_interface::{CaptureStatus, FrameSequence, MatchPhase, RuntimeCommand, RuntimeEvent};
 use champions_runtime::{RecognitionPort, RuntimeBuilder};
 use fake_frame_source::{FakeFrameSource, FakePreviewConverter};
 
@@ -222,8 +222,8 @@ async fn battle_result_phase_change_event_is_emitted() {
         let event = handle.next_event().await.unwrap();
         if matches!(
             event,
-            RuntimeEvent::BattleResultPhaseChanged {
-                is_battle_result_phase: true,
+            RuntimeEvent::MatchPhaseChanged {
+                phase: MatchPhase::BattleResult,
                 ..
             }
         ) {

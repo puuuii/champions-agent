@@ -3,6 +3,14 @@ use crate::types::{
     CaptureStatus, EventSequence, FrameSequence, RecognitionAttemptId, RecognitionStatus,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchPhase {
+    Other,
+    PokemonSelection,
+    Battle,
+    BattleResult,
+}
+
 #[derive(Debug, Clone)]
 pub enum RuntimeEvent {
     CaptureStatusChanged {
@@ -19,9 +27,9 @@ pub enum RuntimeEvent {
         attempt_id: RecognitionAttemptId,
         party: OpponentPartyView,
     },
-    BattleResultPhaseChanged {
+    MatchPhaseChanged {
         event_sequence: EventSequence,
-        is_battle_result_phase: bool,
+        phase: MatchPhase,
     },
     Error {
         event_sequence: EventSequence,

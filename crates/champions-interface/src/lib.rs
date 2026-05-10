@@ -5,7 +5,7 @@ pub mod recognition_view;
 pub mod types;
 
 pub use command::RuntimeCommand;
-pub use event::{RuntimeError, RuntimeEvent};
+pub use event::{MatchPhase, RuntimeError, RuntimeEvent};
 pub use recognition_view::{
     AbilityUsageView, CandidateView, ConfidenceView, ConflictView, EffortValueUsageView,
     ItemUsageView, MoveUsageView, NatureUsageView, OpponentPartyView, PokemonUsageSummaryView,

@@ -6,7 +6,7 @@ use super::subscriptions::{self, RuntimeMessage};
 use crate::services::{DesktopAppServices, SuggestionKind};
 use champions_domain::party::SavedParty;
 use champions_interface::{
-    ConflictView, OpponentPartyView, PokemonUsageSummaryView, RecognizedPokemonView,
+    ConflictView, MatchPhase, OpponentPartyView, PokemonUsageSummaryView, RecognizedPokemonView,
     RuntimeCommand, RuntimeEvent,
 };
 use champions_runtime::PreviewFrame;
@@ -98,7 +98,7 @@ pub struct PokeEditorApp {
     main_window_id: Option<window::Id>,
     restore_window: Option<RestoreWindowState>,
     is_refreshing: bool,
-    is_battle_result_phase: bool,
+    match_phase: MatchPhase,
     editor_status: Option<String>,
 }
 
@@ -181,7 +181,7 @@ impl PokeEditorApp {
                 main_window_id: Some(main_id),
                 restore_window: None,
                 is_refreshing: false,
-                is_battle_result_phase: false,
+                match_phase: MatchPhase::Other,
                 editor_status,
             },
             Task::batch([main_task.discard(), preview_task.discard()]),
@@ -231,7 +231,7 @@ impl PokeEditorApp {
                 self.active_tab = tab;
 
                 if previous_tab != tab {
-                    self.is_battle_result_phase = false;
+                    self.match_phase = MatchPhase::Other;
                     let command = match tab {
                         Tab::Editor => RuntimeCommand::StopRecognition,
                         Tab::SelectionSupport => RuntimeCommand::StartRecognition,
@@ -462,18 +462,19 @@ impl PokeEditorApp {
         match event {
             RuntimeEvent::OpponentPartyRecognized { party, .. } => {
                 self.opponent_party = Some(OpponentPartyState::from_view(party));
-                self.is_battle_result_phase = false;
                 self.active_tab = Tab::SelectionSupport;
             }
-            RuntimeEvent::BattleResultPhaseChanged {
-                is_battle_result_phase,
+            RuntimeEvent::MatchPhaseChanged { phase, .. } => {
+                self.match_phase = phase;
+            }
+            RuntimeEvent::RecognitionStatusChanged {
+                status: champions_interface::RecognitionStatus::Stopped,
                 ..
             } => {
-                if self.active_tab == Tab::SelectionSupport {
-                    self.is_battle_result_phase = is_battle_result_phase;
-                }
+                self.match_phase = MatchPhase::Other;
             }
             RuntimeEvent::RuntimeStopped { .. } => {
+                self.match_phase = MatchPhase::Other;
                 println!("[Runtime] stopped");
             }
             RuntimeEvent::Error { error, .. } => {
@@ -928,19 +929,21 @@ impl PokeEditorApp {
             refresh_btn.on_press(Message::RefreshUsageData)
         };
 
-        let mut header_row = row![
+        let header_row = row![
             text("選出サポート").font(JAPANESE_FONT).size(32),
+            text(format!(
+                "現在: {}",
+                selection_support_phase_label(self.match_phase)
+            ))
+            .font(JAPANESE_FONT)
+            .size(18),
             refresh_btn
         ]
         .spacing(20)
         .align_y(iced::Alignment::Center);
 
-        if self.is_battle_result_phase {
-            header_row = header_row.push(text("バトル結果フェーズ").font(JAPANESE_FONT).size(18));
-        }
-
         let content: Element<'_, Message> = match &self.opponent_party {
-            None => text("ポケモン選出画面を待機中...")
+            None => text(selection_support_waiting_message(self.match_phase))
                 .size(20)
                 .font(JAPANESE_FONT)
                 .into(),
@@ -1255,6 +1258,26 @@ fn find_focused_input() -> impl advanced_widget::Operation<Option<WidgetId>> {
     }
 
     FindFocusedInput { focused: None }
+}
+
+fn selection_support_phase_label(phase: MatchPhase) -> &'static str {
+    match phase {
+        MatchPhase::Other => "その他フェーズ",
+        MatchPhase::PokemonSelection => "ポケモン選択フェーズ",
+        MatchPhase::Battle => "バトルフェーズ",
+        MatchPhase::BattleResult => "バトル結果フェーズ",
+    }
+}
+
+fn selection_support_waiting_message(phase: MatchPhase) -> &'static str {
+    match phase {
+        MatchPhase::Other => "ポケモン選択フェーズを待機中...",
+        MatchPhase::PokemonSelection => {
+            "ポケモン選択フェーズを検出しました。相手パーティを判定中です。"
+        }
+        MatchPhase::Battle => "バトルフェーズです。相手パーティ情報の表示を待機中です。",
+        MatchPhase::BattleResult => "バトル結果フェーズです。",
+    }
 }
 
 fn format_opponent_hint(pokemon: &OpponentPokemonState) -> Option<String> {

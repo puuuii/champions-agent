@@ -11,16 +11,16 @@ use tokio::sync::mpsc;
 
 use champions_interface::{
     AbilityUsageView, CandidateView, ConfidenceView, ConflictView, EffortValueUsageView,
-    EventSequence, FrameSequence, ItemUsageView, MoveUsageView, NatureUsageView, OpponentPartyView,
-    PokemonUsageSummaryView, RecognitionAttemptId, RecognizedPokemonView, RuntimeCommand,
-    RuntimeEvent,
+    EventSequence, FrameSequence, ItemUsageView, MatchPhase, MoveUsageView, NatureUsageView,
+    OpponentPartyView, PokemonUsageSummaryView, RecognitionAttemptId, RecognizedPokemonView,
+    RuntimeCommand, RuntimeEvent,
 };
 
 use crate::frame::CapturedFrame;
 use crate::handle::RuntimeHandle;
 use crate::latest::{LatestFrame, LatestPreview};
 use crate::recognition::RecognitionPort;
-use crate::scheduler::RecognitionScheduler;
+use crate::scheduler::{RecognitionScheduler, SchedulerState};
 use crate::shutdown::{ShutdownSignal, ShutdownToken, shutdown_pair};
 use crate::traits::{CaptureError, FrameSource, PreviewFrameConverter};
 
@@ -423,6 +423,7 @@ impl RecognitionWorker {
     fn run(self) {
         let mut scheduler = RecognitionScheduler::new();
         let mut battle_result_tracker = BattleResultPhaseTracker::default();
+        let mut match_phase_tracker = MatchPhaseTracker::default();
         let mut attempt_id = 0_u64;
         let mut recognition_generation = self.control.recognition_generation();
 
@@ -431,6 +432,9 @@ impl RecognitionWorker {
             if next_generation != recognition_generation {
                 scheduler.reset();
                 battle_result_tracker.reset();
+                if let Some(phase) = match_phase_tracker.reset() {
+                    send_match_phase_changed(&self.event_tx, &self.event_seq, phase);
+                }
                 recognition_generation = next_generation;
             }
 
@@ -439,7 +443,12 @@ impl RecognitionWorker {
                 continue;
             }
 
-            self.run_tick(&mut scheduler, &mut battle_result_tracker, &mut attempt_id);
+            self.run_tick(
+                &mut scheduler,
+                &mut battle_result_tracker,
+                &mut match_phase_tracker,
+                &mut attempt_id,
+            );
             std::thread::sleep(RECOGNITION_TICK_INTERVAL);
         }
     }
@@ -448,6 +457,7 @@ impl RecognitionWorker {
         &self,
         scheduler: &mut RecognitionScheduler,
         battle_result_tracker: &mut BattleResultPhaseTracker,
+        match_phase_tracker: &mut MatchPhaseTracker,
         attempt_id: &mut u64,
     ) {
         let now = Instant::now();
@@ -473,14 +483,21 @@ impl RecognitionWorker {
                     Ok(result) => {
                         let previous_state = scheduler.state();
                         scheduler.on_ocr_result(result.screen_state, now);
+                        let current_state = scheduler.state();
 
-                        if scheduler.state() != previous_state {
+                        if current_state != previous_state {
                             tracing::debug!(
                                 "scheduler state: {:?} -> {:?} (text: {:?})",
                                 previous_state,
-                                scheduler.state(),
+                                current_state,
                                 result.raw_text
                             );
+                        }
+
+                        if let Some(phase) = match_phase_tracker
+                            .on_scheduler_transition(previous_state, current_state)
+                        {
+                            send_match_phase_changed(&self.event_tx, &self.event_seq, phase);
                         }
                     }
                     Err(error) => {
@@ -507,14 +524,11 @@ impl RecognitionWorker {
                 match self.recognition_port.detect_battle_result_phase(ocr_image) {
                     Ok(is_battle_result_phase) => {
                         if battle_result_tracker.update(is_battle_result_phase) {
-                            blocking_send_event(
-                                &self.event_tx,
-                                &self.event_seq,
-                                |event_sequence| RuntimeEvent::BattleResultPhaseChanged {
-                                    event_sequence,
-                                    is_battle_result_phase,
-                                },
-                            );
+                            if let Some(phase) =
+                                match_phase_tracker.on_battle_result(is_battle_result_phase)
+                            {
+                                send_match_phase_changed(&self.event_tx, &self.event_seq, phase);
+                            }
                         }
                     }
                     Err(error) => {
@@ -605,6 +619,74 @@ impl BattleResultPhaseTracker {
     fn reset(&mut self) {
         self.last_ocr_at = None;
         self.is_battle_result_phase = false;
+    }
+}
+
+#[derive(Debug)]
+struct MatchPhaseTracker {
+    phase: MatchPhase,
+}
+
+impl MatchPhaseTracker {
+    #[cfg(test)]
+    fn phase(&self) -> MatchPhase {
+        self.phase
+    }
+
+    fn on_scheduler_transition(
+        &mut self,
+        previous_state: SchedulerState,
+        current_state: SchedulerState,
+    ) -> Option<MatchPhase> {
+        if previous_state == current_state {
+            return None;
+        }
+
+        match current_state {
+            SchedulerState::SelectionScreenEntered | SchedulerState::SelectionScreenStable => {
+                self.update(MatchPhase::PokemonSelection)
+            }
+            SchedulerState::SelectionScreenExited
+                if matches!(
+                    previous_state,
+                    SchedulerState::SelectionScreenEntered | SchedulerState::SelectionScreenStable
+                ) =>
+            {
+                self.update(MatchPhase::Battle)
+            }
+            _ => None,
+        }
+    }
+
+    fn on_battle_result(&mut self, is_battle_result_phase: bool) -> Option<MatchPhase> {
+        if is_battle_result_phase {
+            self.update(MatchPhase::BattleResult)
+        } else if self.phase == MatchPhase::BattleResult {
+            self.update(MatchPhase::Other)
+        } else {
+            None
+        }
+    }
+
+    fn reset(&mut self) -> Option<MatchPhase> {
+        self.update(MatchPhase::Other)
+    }
+
+    fn update(&mut self, new_phase: MatchPhase) -> Option<MatchPhase> {
+        if self.phase == new_phase {
+            return None;
+        }
+
+        self.phase = new_phase;
+        Some(new_phase)
+    }
+}
+
+impl Default for MatchPhaseTracker {
+    fn default() -> Self {
+        Self {
+            phase: MatchPhase::Other,
+        }
     }
 }
 
@@ -701,6 +783,19 @@ fn blocking_send_event<F>(
     F: FnOnce(EventSequence) -> RuntimeEvent,
 {
     let _ = event_tx.blocking_send(build(event_seq.next()));
+}
+
+fn send_match_phase_changed(
+    event_tx: &mpsc::Sender<RuntimeEvent>,
+    event_seq: &EventSequencer,
+    phase: MatchPhase,
+) {
+    blocking_send_event(event_tx, event_seq, |event_sequence| {
+        RuntimeEvent::MatchPhaseChanged {
+            event_sequence,
+            phase,
+        }
+    });
 }
 
 fn map_capture_error(error: &CaptureError) -> champions_interface::RuntimeError {
@@ -824,7 +919,8 @@ fn map_usage_summary_view(
 
 #[cfg(test)]
 mod tests {
-    use super::map_to_opponent_party_view;
+    use super::{MatchPhaseTracker, map_to_opponent_party_view};
+    use crate::scheduler::SchedulerState;
     use champions_application::use_cases::OpponentPartyIdentificationResult;
     use champions_domain::recognition::{
         ConfidenceScore, RecognizedParty, RecognizedPokemon, SelectionSlot,
@@ -832,6 +928,7 @@ mod tests {
     use champions_domain::usage::{
         AbilityUsage, EffortValueUsage, ItemUsage, MoveUsage, NatureUsage, PokemonUsageSummary,
     };
+    use champions_interface::MatchPhase;
 
     #[test]
     fn map_to_opponent_party_view_attaches_usage_by_recognized_name() {
@@ -879,6 +976,67 @@ mod tests {
                 .map(|ability| ability.name.as_str()),
             Some("せいでんき")
         );
+    }
+
+    #[test]
+    fn match_phase_tracker_transitions_from_selection_to_battle() {
+        let mut tracker = MatchPhaseTracker::default();
+
+        assert_eq!(
+            tracker.on_scheduler_transition(
+                SchedulerState::Idle,
+                SchedulerState::SelectionScreenEntered,
+            ),
+            Some(MatchPhase::PokemonSelection)
+        );
+        assert_eq!(tracker.phase(), MatchPhase::PokemonSelection);
+        assert_eq!(
+            tracker.on_scheduler_transition(
+                SchedulerState::SelectionScreenEntered,
+                SchedulerState::SelectionScreenStable,
+            ),
+            None
+        );
+        assert_eq!(
+            tracker.on_scheduler_transition(
+                SchedulerState::SelectionScreenStable,
+                SchedulerState::SelectionScreenExited,
+            ),
+            Some(MatchPhase::Battle)
+        );
+        assert_eq!(tracker.phase(), MatchPhase::Battle);
+    }
+
+    #[test]
+    fn match_phase_tracker_transitions_from_battle_to_result_and_other() {
+        let mut tracker = MatchPhaseTracker::default();
+
+        tracker
+            .on_scheduler_transition(SchedulerState::Idle, SchedulerState::SelectionScreenEntered);
+        tracker.on_scheduler_transition(
+            SchedulerState::SelectionScreenStable,
+            SchedulerState::SelectionScreenExited,
+        );
+
+        assert_eq!(tracker.phase(), MatchPhase::Battle);
+        assert_eq!(
+            tracker.on_battle_result(true),
+            Some(MatchPhase::BattleResult)
+        );
+        assert_eq!(tracker.phase(), MatchPhase::BattleResult);
+        assert_eq!(tracker.on_battle_result(false), Some(MatchPhase::Other));
+        assert_eq!(tracker.phase(), MatchPhase::Other);
+    }
+
+    #[test]
+    fn match_phase_tracker_allows_direct_transition_to_battle_result() {
+        let mut tracker = MatchPhaseTracker::default();
+
+        assert_eq!(
+            tracker.on_battle_result(true),
+            Some(MatchPhase::BattleResult)
+        );
+        assert_eq!(tracker.phase(), MatchPhase::BattleResult);
     }
 
     fn sample_usage(name: &str) -> PokemonUsageSummary {
