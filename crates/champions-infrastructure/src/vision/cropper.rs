@@ -1,8 +1,6 @@
 use champions_application::{OcrImage, PartyImageSet, RecognitionImageExtractor, SlotImage};
 use champions_domain::recognition::SelectionSlot;
 
-const BATTLE_RESULT_DEBUG_CAPTURE_PATH: &str = "capture.png";
-
 #[derive(Debug, Clone)]
 pub struct CropConfig {
     pub center_x: f64,
@@ -112,32 +110,6 @@ impl OpenCvCropper {
             1
         }
     }
-
-    fn write_battle_result_debug_capture(&self, image: &OcrImage) {
-        if image.width == 0 || image.height == 0 || image.rgb_bytes.is_empty() {
-            tracing::warn!("battle result debug capture skipped: extracted image is empty");
-            return;
-        }
-
-        let Some(rgb_image) =
-            image::RgbImage::from_raw(image.width, image.height, image.rgb_bytes.clone())
-        else {
-            tracing::warn!(
-                width = image.width,
-                height = image.height,
-                bytes = image.rgb_bytes.len(),
-                "battle result debug capture skipped: invalid RGB buffer"
-            );
-            return;
-        };
-
-        if let Err(error) = rgb_image.save(BATTLE_RESULT_DEBUG_CAPTURE_PATH) {
-            tracing::warn!(
-                path = BATTLE_RESULT_DEBUG_CAPTURE_PATH,
-                "battle result debug capture save failed: {error}"
-            );
-        }
-    }
 }
 
 impl Default for OpenCvCropper {
@@ -192,23 +164,16 @@ impl RecognitionImageExtractor for OpenCvCropper {
             &self.battle_result_config,
             0,
         ) {
-            Some((rgb_bytes, w, h)) => {
-                let image = OcrImage {
-                    width: w,
-                    height: h,
-                    rgb_bytes,
-                };
-                self.write_battle_result_debug_capture(&image);
-                image
-            }
-            None => {
-                tracing::warn!("battle result debug capture skipped: crop region is empty");
-                OcrImage {
-                    width: 0,
-                    height: 0,
-                    rgb_bytes: Vec::new(),
-                }
-            }
+            Some((rgb_bytes, w, h)) => OcrImage {
+                width: w,
+                height: h,
+                rgb_bytes,
+            },
+            None => OcrImage {
+                width: 0,
+                height: 0,
+                rgb_bytes: Vec::new(),
+            },
         }
     }
 
