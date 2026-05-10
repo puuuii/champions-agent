@@ -164,6 +164,7 @@ async fn recognition_continues_when_preview_is_disabled() {
         .recognition_port(Box::new(ProbeRecognitionPort::new(
             detect_calls.clone(),
             Duration::ZERO,
+            false,
         )))
         .build();
 
@@ -190,6 +191,57 @@ async fn recognition_continues_when_preview_is_disabled() {
 }
 
 #[tokio::test]
+async fn battle_result_phase_change_event_is_emitted() {
+    let source = FakeFrameSource::new(640, 480, 1000);
+    let converter = FakePreviewConverter;
+    let detect_calls = Arc::new(AtomicUsize::new(0));
+
+    let (mut handle, workers) = RuntimeBuilder::new()
+        .frame_source(Box::new(source))
+        .preview_converter(Box::new(converter))
+        .recognition_port(Box::new(ProbeRecognitionPort::new(
+            detect_calls.clone(),
+            Duration::ZERO,
+            true,
+        )))
+        .build();
+
+    let worker_task = tokio::spawn(async move {
+        workers.run().await;
+    });
+
+    handle.send(RuntimeCommand::StartCapture).await.unwrap();
+    handle.send(RuntimeCommand::StartRecognition).await.unwrap();
+
+    assert_capture_status(&mut handle, CaptureStatus::Running).await;
+    assert_recognition_running(&mut handle).await;
+    wait_for_detect_calls(&detect_calls, 1).await;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let event = handle.next_event().await.unwrap();
+        if matches!(
+            event,
+            RuntimeEvent::BattleResultPhaseChanged {
+                is_battle_result_phase: true,
+                ..
+            }
+        ) {
+            break;
+        }
+
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for battle result phase event"
+        );
+    }
+
+    handle.send(RuntimeCommand::Shutdown).await.unwrap();
+    assert_runtime_stopped(&mut handle).await;
+    worker_task.await.unwrap();
+}
+
+#[tokio::test]
 async fn shutdown_stays_responsive_during_blocking_recognition() {
     let source = FakeFrameSource::new(640, 480, 1000);
     let converter = FakePreviewConverter;
@@ -201,6 +253,7 @@ async fn shutdown_stays_responsive_during_blocking_recognition() {
         .recognition_port(Box::new(ProbeRecognitionPort::new(
             detect_calls.clone(),
             Duration::from_millis(400),
+            false,
         )))
         .build();
 
@@ -273,13 +326,15 @@ async fn wait_for_detect_calls(detect_calls: &Arc<AtomicUsize>, minimum_calls: u
 struct ProbeRecognitionPort {
     detect_calls: Arc<AtomicUsize>,
     block_for: Duration,
+    battle_result_phase: bool,
 }
 
 impl ProbeRecognitionPort {
-    fn new(detect_calls: Arc<AtomicUsize>, block_for: Duration) -> Self {
+    fn new(detect_calls: Arc<AtomicUsize>, block_for: Duration, battle_result_phase: bool) -> Self {
         Self {
             detect_calls,
             block_for,
+            battle_result_phase,
         }
     }
 }
@@ -300,6 +355,10 @@ impl RecognitionPort for ProbeRecognitionPort {
         })
     }
 
+    fn detect_battle_result_phase(&self, _image: OcrImage) -> Result<bool, String> {
+        Ok(self.battle_result_phase)
+    }
+
     fn identify_opponent_party(
         &self,
         _images: PartyImageSet,
@@ -314,6 +373,19 @@ impl RecognitionPort for ProbeRecognitionPort {
     }
 
     fn extract_target_text_image(
+        &self,
+        _frame_width: u32,
+        _frame_height: u32,
+        _frame_bytes: &[u8],
+    ) -> OcrImage {
+        OcrImage {
+            width: 1,
+            height: 1,
+            rgb_bytes: vec![0, 0, 0],
+        }
+    }
+
+    fn extract_battle_result_text_image(
         &self,
         _frame_width: u32,
         _frame_height: u32,

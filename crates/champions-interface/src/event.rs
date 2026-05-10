@@ -19,6 +19,10 @@ pub enum RuntimeEvent {
         attempt_id: RecognitionAttemptId,
         party: OpponentPartyView,
     },
+    BattleResultPhaseChanged {
+        event_sequence: EventSequence,
+        is_battle_result_phase: bool,
+    },
     Error {
         event_sequence: EventSequence,
         error: RuntimeError,

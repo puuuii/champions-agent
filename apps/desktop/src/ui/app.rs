@@ -98,6 +98,7 @@ pub struct PokeEditorApp {
     main_window_id: Option<window::Id>,
     restore_window: Option<RestoreWindowState>,
     is_refreshing: bool,
+    is_battle_result_phase: bool,
     editor_status: Option<String>,
 }
 
@@ -180,6 +181,7 @@ impl PokeEditorApp {
                 main_window_id: Some(main_id),
                 restore_window: None,
                 is_refreshing: false,
+                is_battle_result_phase: false,
                 editor_status,
             },
             Task::batch([main_task.discard(), preview_task.discard()]),
@@ -229,6 +231,7 @@ impl PokeEditorApp {
                 self.active_tab = tab;
 
                 if previous_tab != tab {
+                    self.is_battle_result_phase = false;
                     let command = match tab {
                         Tab::Editor => RuntimeCommand::StopRecognition,
                         Tab::SelectionSupport => RuntimeCommand::StartRecognition,
@@ -459,7 +462,16 @@ impl PokeEditorApp {
         match event {
             RuntimeEvent::OpponentPartyRecognized { party, .. } => {
                 self.opponent_party = Some(OpponentPartyState::from_view(party));
+                self.is_battle_result_phase = false;
                 self.active_tab = Tab::SelectionSupport;
+            }
+            RuntimeEvent::BattleResultPhaseChanged {
+                is_battle_result_phase,
+                ..
+            } => {
+                if self.active_tab == Tab::SelectionSupport {
+                    self.is_battle_result_phase = is_battle_result_phase;
+                }
             }
             RuntimeEvent::RuntimeStopped { .. } => {
                 println!("[Runtime] stopped");
@@ -916,12 +928,16 @@ impl PokeEditorApp {
             refresh_btn.on_press(Message::RefreshUsageData)
         };
 
-        let header_row = row![
+        let mut header_row = row![
             text("選出サポート").font(JAPANESE_FONT).size(32),
             refresh_btn
         ]
         .spacing(20)
         .align_y(iced::Alignment::Center);
+
+        if self.is_battle_result_phase {
+            header_row = header_row.push(text("バトル結果フェーズ").font(JAPANESE_FONT).size(18));
+        }
 
         let content: Element<'_, Message> = match &self.opponent_party {
             None => text("ポケモン選出画面を待機中...")

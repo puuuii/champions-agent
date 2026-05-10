@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use champions_application::use_cases::{
-    DetectSelectionScreenCommand, DetectSelectionScreenUseCase, IdentifyOpponentPartyCommand,
-    IdentifyOpponentPartyUseCase, OpponentPartyIdentificationResult,
+    DetectBattleResultPhaseCommand, DetectBattleResultPhaseUseCase, DetectSelectionScreenCommand,
+    DetectSelectionScreenUseCase, IdentifyOpponentPartyCommand, IdentifyOpponentPartyUseCase,
+    OpponentPartyIdentificationResult,
 };
 use champions_application::{
     OcrImage, PartyImageSet, RecognitionConfig, RecognitionImageExtractor,
@@ -46,6 +47,15 @@ impl RecognitionPort for RecognitionRuntimePort {
             .map_err(|e| e.to_string())
     }
 
+    fn detect_battle_result_phase(&self, image: OcrImage) -> Result<bool, String> {
+        let use_case = DetectBattleResultPhaseUseCase::new(&self.ocr_engine);
+        use_case
+            .execute(DetectBattleResultPhaseCommand {
+                target_text_image: image,
+            })
+            .map_err(|e| e.to_string())
+    }
+
     fn identify_opponent_party(
         &self,
         images: PartyImageSet,
@@ -68,6 +78,19 @@ impl RecognitionPort for RecognitionRuntimePort {
     ) -> OcrImage {
         self.image_extractor
             .extract_target_text_image(frame_width, frame_height, frame_bytes)
+    }
+
+    fn extract_battle_result_text_image(
+        &self,
+        frame_width: u32,
+        frame_height: u32,
+        frame_bytes: &[u8],
+    ) -> OcrImage {
+        self.image_extractor.extract_battle_result_text_image(
+            frame_width,
+            frame_height,
+            frame_bytes,
+        )
     }
 
     fn extract_party_slots(

@@ -13,6 +13,7 @@ pub struct CropConfig {
 pub struct OpenCvCropper {
     opponent_config: CropConfig,
     ocr_config: CropConfig,
+    battle_result_config: CropConfig,
 }
 
 impl OpenCvCropper {
@@ -30,6 +31,14 @@ impl OpenCvCropper {
                 y_start: 0.04,
                 y_gap: 0.0,
                 size_w: 0.04,
+                width_ratio: 6.0,
+            },
+            // Matches scripts/crop_image_with_config.py for WIN/LOSE detection.
+            battle_result_config: CropConfig {
+                center_x: 0.51,
+                y_start: 0.65,
+                y_gap: 0.0,
+                size_w: 0.13,
                 width_ratio: 6.0,
             },
         }
@@ -124,6 +133,35 @@ impl RecognitionImageExtractor for OpenCvCropper {
             frame_bytes,
             channels,
             &self.ocr_config,
+            0,
+        ) {
+            Some((rgb_bytes, w, h)) => OcrImage {
+                width: w,
+                height: h,
+                rgb_bytes,
+            },
+            None => OcrImage {
+                width: 0,
+                height: 0,
+                rgb_bytes: Vec::new(),
+            },
+        }
+    }
+
+    fn extract_battle_result_text_image(
+        &self,
+        frame_width: u32,
+        frame_height: u32,
+        frame_bytes: &[u8],
+    ) -> OcrImage {
+        let channels = self.detect_channels(frame_width, frame_height, frame_bytes);
+
+        match self.crop_region(
+            frame_width,
+            frame_height,
+            frame_bytes,
+            channels,
+            &self.battle_result_config,
             0,
         ) {
             Some((rgb_bytes, w, h)) => OcrImage {

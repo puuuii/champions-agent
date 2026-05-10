@@ -555,3 +555,45 @@ fn detect_selection_screen_rejects_text_without_single_battle_header() {
 
     assert_eq!(result.screen_state, ScreenState::Other);
 }
+
+#[test]
+fn detect_battle_result_phase_accepts_win_text() {
+    let ocr = FakeOcrEngine::new("YOU WIN");
+    let uc = DetectBattleResultPhaseUseCase::new(&ocr);
+
+    let result = uc
+        .execute(DetectBattleResultPhaseCommand {
+            target_text_image: sample_ocr_image(),
+        })
+        .unwrap();
+
+    assert!(result);
+}
+
+#[test]
+fn detect_battle_result_phase_accepts_lose_text() {
+    let ocr = FakeOcrEngine::new("LOSE");
+    let uc = DetectBattleResultPhaseUseCase::new(&ocr);
+
+    let result = uc
+        .execute(DetectBattleResultPhaseCommand {
+            target_text_image: sample_ocr_image(),
+        })
+        .unwrap();
+
+    assert!(result);
+}
+
+#[test]
+fn detect_battle_result_phase_rejects_other_text() {
+    let ocr = FakeOcrEngine::new("ターン 3");
+    let uc = DetectBattleResultPhaseUseCase::new(&ocr);
+
+    let result = uc
+        .execute(DetectBattleResultPhaseCommand {
+            target_text_image: sample_ocr_image(),
+        })
+        .unwrap();
+
+    assert!(!result);
+}

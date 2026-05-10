@@ -207,6 +207,7 @@ impl RuntimeWorkers {
 
 const RECOGNITION_TICK_INTERVAL: Duration = Duration::from_millis(100);
 const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(20);
+const BATTLE_RESULT_OCR_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Default, Clone)]
 struct EventSequencer {
@@ -421,6 +422,7 @@ impl RecognitionWorker {
 
     fn run(self) {
         let mut scheduler = RecognitionScheduler::new();
+        let mut battle_result_tracker = BattleResultPhaseTracker::default();
         let mut attempt_id = 0_u64;
         let mut recognition_generation = self.control.recognition_generation();
 
@@ -428,6 +430,7 @@ impl RecognitionWorker {
             let next_generation = self.control.recognition_generation();
             if next_generation != recognition_generation {
                 scheduler.reset();
+                battle_result_tracker.reset();
                 recognition_generation = next_generation;
             }
 
@@ -436,54 +439,93 @@ impl RecognitionWorker {
                 continue;
             }
 
-            self.run_tick(&mut scheduler, &mut attempt_id);
+            self.run_tick(&mut scheduler, &mut battle_result_tracker, &mut attempt_id);
             std::thread::sleep(RECOGNITION_TICK_INTERVAL);
         }
     }
 
-    fn run_tick(&self, scheduler: &mut RecognitionScheduler, attempt_id: &mut u64) {
+    fn run_tick(
+        &self,
+        scheduler: &mut RecognitionScheduler,
+        battle_result_tracker: &mut BattleResultPhaseTracker,
+        attempt_id: &mut u64,
+    ) {
         let now = Instant::now();
+        let should_run_selection_ocr = scheduler.should_run_ocr(now);
+        let should_run_battle_result_ocr = battle_result_tracker.should_run(now);
+        let mut cached_frame = None;
 
-        if scheduler.should_run_ocr(now) {
+        if should_run_selection_ocr || should_run_battle_result_ocr {
             let frame = match self.latest_frame.peek() {
                 Some(frame) => frame,
                 None => return,
             };
+            cached_frame = Some(frame.clone());
 
-            let ocr_image = self.recognition_port.extract_target_text_image(
-                frame.image.width,
-                frame.image.height,
-                &frame.image.bytes,
-            );
+            if should_run_selection_ocr {
+                let ocr_image = self.recognition_port.extract_target_text_image(
+                    frame.image.width,
+                    frame.image.height,
+                    &frame.image.bytes,
+                );
 
-            match self.recognition_port.detect_selection_screen(ocr_image) {
-                Ok(result) => {
-                    let previous_state = scheduler.state();
-                    scheduler.on_ocr_result(result.screen_state, now);
+                match self.recognition_port.detect_selection_screen(ocr_image) {
+                    Ok(result) => {
+                        let previous_state = scheduler.state();
+                        scheduler.on_ocr_result(result.screen_state, now);
 
-                    if scheduler.state() != previous_state {
-                        tracing::debug!(
-                            "scheduler state: {:?} -> {:?} (text: {:?})",
-                            previous_state,
-                            scheduler.state(),
-                            result.raw_text
-                        );
+                        if scheduler.state() != previous_state {
+                            tracing::debug!(
+                                "scheduler state: {:?} -> {:?} (text: {:?})",
+                                previous_state,
+                                scheduler.state(),
+                                result.raw_text
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!("OCR failed: {error}");
+                        blocking_send_event(&self.event_tx, &self.event_seq, |event_sequence| {
+                            RuntimeEvent::Error {
+                                event_sequence,
+                                error: champions_interface::RuntimeError::RecognitionFailed(error),
+                            }
+                        });
                     }
                 }
-                Err(error) => {
-                    tracing::warn!("OCR failed: {error}");
-                    blocking_send_event(&self.event_tx, &self.event_seq, |event_sequence| {
-                        RuntimeEvent::Error {
-                            event_sequence,
-                            error: champions_interface::RuntimeError::RecognitionFailed(error),
+            }
+
+            if should_run_battle_result_ocr {
+                battle_result_tracker.record_check(now);
+
+                let ocr_image = self.recognition_port.extract_battle_result_text_image(
+                    frame.image.width,
+                    frame.image.height,
+                    &frame.image.bytes,
+                );
+
+                match self.recognition_port.detect_battle_result_phase(ocr_image) {
+                    Ok(is_battle_result_phase) => {
+                        if battle_result_tracker.update(is_battle_result_phase) {
+                            blocking_send_event(
+                                &self.event_tx,
+                                &self.event_seq,
+                                |event_sequence| RuntimeEvent::BattleResultPhaseChanged {
+                                    event_sequence,
+                                    is_battle_result_phase,
+                                },
+                            );
                         }
-                    });
+                    }
+                    Err(error) => {
+                        tracing::warn!("battle result OCR failed: {error}");
+                    }
                 }
             }
         }
 
         if scheduler.should_run_identification() {
-            let frame = match self.latest_frame.peek() {
+            let frame = match cached_frame.or_else(|| self.latest_frame.peek()) {
                 Some(frame) => frame,
                 None => return,
             };
@@ -530,6 +572,39 @@ impl RecognitionWorker {
                 }
             }
         }
+    }
+}
+
+#[derive(Debug, Default)]
+struct BattleResultPhaseTracker {
+    last_ocr_at: Option<Instant>,
+    is_battle_result_phase: bool,
+}
+
+impl BattleResultPhaseTracker {
+    fn should_run(&self, now: Instant) -> bool {
+        match self.last_ocr_at {
+            Some(last) => now.duration_since(last) >= BATTLE_RESULT_OCR_INTERVAL,
+            None => true,
+        }
+    }
+
+    fn record_check(&mut self, now: Instant) {
+        self.last_ocr_at = Some(now);
+    }
+
+    fn update(&mut self, is_battle_result_phase: bool) -> bool {
+        if self.is_battle_result_phase == is_battle_result_phase {
+            return false;
+        }
+
+        self.is_battle_result_phase = is_battle_result_phase;
+        true
+    }
+
+    fn reset(&mut self) {
+        self.last_ocr_at = None;
+        self.is_battle_result_phase = false;
     }
 }
 
