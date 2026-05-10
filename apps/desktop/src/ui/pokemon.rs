@@ -22,7 +22,6 @@ pub struct SuggestionRequest {
 
 #[derive(Debug, Clone)]
 pub struct PokemonState {
-    pub label: String,
     pub species: String,
     pub item: String,
     pub h: String,
@@ -58,9 +57,8 @@ pub enum Message {
 }
 
 impl PokemonState {
-    pub fn new(label: String) -> Self {
+    pub fn new() -> Self {
         Self {
-            label,
             species: String::new(),
             item: String::new(),
             h: String::new(),
@@ -77,9 +75,8 @@ impl PokemonState {
         }
     }
 
-    pub fn from_saved_build(label: String, build: PokemonBuild) -> Self {
+    pub fn from_saved_build(build: PokemonBuild) -> Self {
         Self {
-            label,
             species: build.species_name,
             item: build.item_name.unwrap_or_default(),
             h: build.effort_values.h.to_string(),
@@ -322,27 +319,11 @@ impl PokemonView {
             restore_button
         };
 
-        let restore_label = if can_restore_from_library {
-            text("保存済み一覧あり").font(JAPANESE_FONT).size(12)
-        } else {
-            text("保存済み一覧なし")
-                .font(JAPANESE_FONT)
-                .size(12)
-                .color(Color::from_rgb(0.45, 0.45, 0.45))
-        };
-
         container(
             column![
-                row![
-                    text(&state.label)
-                        .size(18)
-                        .color(Color::from_rgb(0.3, 0.3, 0.3)),
-                    restore_label,
-                    save_button,
-                    restore_button,
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
+                row![save_button, restore_button,]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
                 species_field,
                 item_field,
                 row![stats_col1, stats_col2, moves_col].spacing(20)

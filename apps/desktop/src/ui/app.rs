@@ -119,11 +119,11 @@ impl PokeEditorApp {
         };
 
         let pokemons = if saved_party.pokemons.is_empty() {
-            std::array::from_fn(|i| PokemonState::new(format!("poke{}", i + 1)))
+            std::array::from_fn(|_| PokemonState::new())
         } else {
-            let mut pokes = std::array::from_fn(|i| PokemonState::new(format!("poke{}", i + 1)));
+            let mut pokes = std::array::from_fn(|_| PokemonState::new());
             for (i, build) in saved_party.pokemons.iter().cloned().enumerate().take(6) {
-                pokes[i] = PokemonState::from_saved_build(format!("poke{}", i + 1), build);
+                pokes[i] = PokemonState::from_saved_build(build);
             }
             pokes
         };
@@ -274,7 +274,7 @@ impl PokeEditorApp {
         let mut saved_party = self.saved_party.clone();
         saved_party.pokemons = current_party.clone();
         saved_party.remember_pokemons(current_party);
-        self.persist_saved_party(saved_party, "パーティ全体を保存しました".to_string());
+        self.persist_saved_party(saved_party);
     }
 
     fn save_pokemon(&mut self, index: usize) {
@@ -291,10 +291,7 @@ impl PokeEditorApp {
         saved_party.pokemons[index] = build.clone();
         saved_party.remember_pokemon(build);
 
-        self.persist_saved_party(
-            saved_party,
-            format!("ポケモン{}を保存済み一覧に追加しました", index + 1),
-        );
+        self.persist_saved_party(saved_party);
     }
 
     fn open_restore_window(&mut self, index: usize) -> Task<Message> {
@@ -305,7 +302,6 @@ impl PokeEditorApp {
 
         if let Some(window_state) = self.restore_window.as_mut() {
             window_state.target_index = index;
-            self.editor_status = Some(format!("ポケモン{}の復元候補を表示しています", index + 1));
             return Task::none();
         }
 
@@ -320,7 +316,6 @@ impl PokeEditorApp {
             id,
             target_index: index,
         });
-        self.editor_status = Some(format!("ポケモン{}の復元候補を開きました", index + 1));
         task.discard()
     }
 
@@ -342,16 +337,8 @@ impl PokeEditorApp {
         }
         saved_party.pokemons[window_state.target_index] = build.clone();
 
-        if self.persist_saved_party(
-            saved_party,
-            format!(
-                "{}をポケモン{}に復元しました",
-                display_pokemon_name(&build),
-                window_state.target_index + 1
-            ),
-        ) {
-            let label = self.pokemons[window_state.target_index].label.clone();
-            self.pokemons[window_state.target_index] = PokemonState::from_saved_build(label, build);
+        if self.persist_saved_party(saved_party) {
+            self.pokemons[window_state.target_index] = PokemonState::from_saved_build(build);
             return self.close_restore_window();
         }
 
@@ -366,11 +353,11 @@ impl PokeEditorApp {
         window::close(window_state.id)
     }
 
-    fn persist_saved_party(&mut self, saved_party: SavedParty, success_message: String) -> bool {
+    fn persist_saved_party(&mut self, saved_party: SavedParty) -> bool {
         match self.services.save_party(saved_party.clone()) {
             Ok(()) => {
                 self.saved_party = saved_party;
-                self.editor_status = Some(success_message);
+                self.editor_status = None;
                 true
             }
             Err(error) => {
@@ -526,25 +513,17 @@ impl PokeEditorApp {
     }
 
     fn restore_picker_view(&self) -> Element<'_, Message> {
-        let Some(window_state) = self.restore_window else {
+        if self.restore_window.is_none() {
             return container(text("復元ウィンドウを初期化できませんでした").font(JAPANESE_FONT))
                 .padding(20)
                 .into();
-        };
+        }
 
         let header = row![
-            column![
-                text("保存済みポケモン一覧").font(JAPANESE_FONT).size(28),
-                text(format!("復元先: ポケモン{}", window_state.target_index + 1))
-                    .font(JAPANESE_FONT)
-                    .size(14),
-            ]
-            .spacing(4),
             button(text("閉じる").font(JAPANESE_FONT))
                 .on_press(Message::CloseRestoreWindow)
                 .padding(10),
         ]
-        .spacing(20)
         .align_y(iced::Alignment::Center);
 
         let content: Element<'_, Message> = if self.saved_party.saved_pokemons.is_empty() {
@@ -612,19 +591,7 @@ impl PokeEditorApp {
         .spacing(20)
         .align_y(iced::Alignment::Center);
 
-        let mut content = column![
-            header,
-            text(format!(
-                "保存済みポケモン一覧: {} 件",
-                self.saved_pokemon_count()
-            ))
-            .font(JAPANESE_FONT)
-            .size(14),
-            text("各カードで保存すると一覧へ追加され、復元は別ウィンドウから選択できます")
-                .font(JAPANESE_FONT)
-                .size(14)
-        ]
-        .spacing(20);
+        let mut content = column![header].spacing(20);
 
         if let Some(status) = &self.editor_status {
             content = content.push(text(status).font(JAPANESE_FONT).size(14));
