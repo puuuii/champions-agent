@@ -211,7 +211,7 @@ impl PokemonState {
 pub struct PokemonView;
 
 impl PokemonView {
-    pub fn view(state: &PokemonState, has_saved_snapshot: bool) -> Element<'_, Message> {
+    pub fn view(state: &PokemonState, can_restore_from_library: bool) -> Element<'_, Message> {
         let stat_input = |label: &'static str, value: &str, on_change: fn(String) -> Message| {
             row![
                 text(label).width(20),
@@ -315,17 +315,17 @@ impl PokemonView {
             .on_press(Message::SaveRequested)
             .padding([6, 10]);
 
-        let restore_button = button(text("この枠を復元").font(JAPANESE_FONT)).padding([6, 10]);
-        let restore_button = if has_saved_snapshot {
+        let restore_button = button(text("一覧から復元").font(JAPANESE_FONT)).padding([6, 10]);
+        let restore_button = if can_restore_from_library {
             restore_button.on_press(Message::RestoreRequested)
         } else {
             restore_button
         };
 
-        let saved_label = if has_saved_snapshot {
-            text("保存済み").font(JAPANESE_FONT).size(12)
+        let restore_label = if can_restore_from_library {
+            text("保存済み一覧あり").font(JAPANESE_FONT).size(12)
         } else {
-            text("未保存")
+            text("保存済み一覧なし")
                 .font(JAPANESE_FONT)
                 .size(12)
                 .color(Color::from_rgb(0.45, 0.45, 0.45))
@@ -337,7 +337,7 @@ impl PokemonView {
                     text(&state.label)
                         .size(18)
                         .color(Color::from_rgb(0.3, 0.3, 0.3)),
-                    saved_label,
+                    restore_label,
                     save_button,
                     restore_button,
                 ]

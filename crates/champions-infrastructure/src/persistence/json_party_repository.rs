@@ -88,12 +88,65 @@ mod tests {
                     ],
                 },
             }],
+            saved_pokemons: vec![PokemonBuild {
+                species_name: "ミミッキュ".to_string(),
+                item_name: Some("いのちのたま".to_string()),
+                ability_name: Some("ばけのかわ".to_string()),
+                nature_name: Some("ようき".to_string()),
+                effort_values: EffortValueSpread {
+                    h: 4,
+                    a: 252,
+                    b: 0,
+                    c: 0,
+                    d: 0,
+                    s: 252,
+                },
+                moves: MoveSet {
+                    moves: [
+                        "じゃれつく".to_string(),
+                        "かげうち".to_string(),
+                        "つるぎのまい".to_string(),
+                        "ドレインパンチ".to_string(),
+                    ],
+                },
+            }],
         };
 
         repo.save_my_party(&party).unwrap();
         let loaded = repo.load_my_party().unwrap();
         assert_eq!(loaded.pokemons.len(), 1);
         assert_eq!(loaded.pokemons[0].species_name, "ピカチュウ");
+        assert_eq!(loaded.saved_pokemons.len(), 1);
+        assert_eq!(loaded.saved_pokemons[0].species_name, "ミミッキュ");
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_load_old_format_without_saved_pokemons() {
+        let dir = test_dir();
+        let path = dir.join("party_old_format.json");
+        fs::write(
+            &path,
+            r#"{
+  "pokemons": [
+    {
+      "species_name": "ピカチュウ",
+      "item_name": null,
+      "ability_name": null,
+      "nature_name": null,
+      "effort_values": { "h": 0, "a": 0, "b": 0, "c": 0, "d": 0, "s": 0 },
+      "moves": { "moves": ["", "", "", ""] }
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+
+        let repo = JsonPartyRepository::new(path.clone());
+        let loaded = repo.load_my_party().unwrap();
+        assert_eq!(loaded.pokemons.len(), 1);
+        assert!(loaded.saved_pokemons.is_empty());
 
         let _ = fs::remove_file(&path);
     }

@@ -2,7 +2,7 @@ use super::components::VideoPreview;
 use super::pokemon::{FieldType, PokemonState, PokemonView, SuggestionRequest};
 use super::subscriptions::{self, RuntimeMessage};
 use crate::services::{DesktopAppServices, SuggestionKind};
-use champions_domain::party::SavedParty;
+use champions_domain::party::{PokemonBuild, SavedParty};
 use champions_interface::{
     ConflictView, OpponentPartyView, PokemonUsageSummaryView, RecognizedPokemonView,
     RuntimeCommand, RuntimeEvent,
@@ -69,6 +69,12 @@ impl OpponentPokemonState {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RestoreWindowState {
+    id: window::Id,
+    target_index: usize,
+}
+
 pub struct PokeEditorApp {
     pokemons: [PokemonState; 6],
     saved_party: SavedParty,
@@ -78,6 +84,7 @@ pub struct PokeEditorApp {
     latest_preview: Option<PreviewFrame>,
     preview_window_id: Option<window::Id>,
     main_window_id: Option<window::Id>,
+    restore_window: Option<RestoreWindowState>,
     is_refreshing: bool,
     editor_status: Option<String>,
 }
@@ -89,6 +96,8 @@ pub enum Message {
     OpponentPokemonSuggestionSelected(usize, String),
     TabSelected(Tab),
     Save,
+    RestorePokemonSelected(usize),
+    CloseRestoreWindow,
     RuntimeMsg(RuntimeMessage),
     RuntimeCommandSent(Result<(), String>),
     WindowClosed(window::Id),
@@ -145,6 +154,7 @@ impl PokeEditorApp {
                 latest_preview: None,
                 preview_window_id: Some(preview_id),
                 main_window_id: Some(main_id),
+                restore_window: None,
                 is_refreshing: false,
                 editor_status,
             },
@@ -159,7 +169,7 @@ impl PokeEditorApp {
                     self.save_pokemon(index);
                 }
                 super::pokemon::Message::RestoreRequested => {
-                    self.restore_pokemon(index);
+                    return self.open_restore_window(index);
                 }
                 other => {
                     let request = self.pokemons[index].update(other);
@@ -198,6 +208,12 @@ impl PokeEditorApp {
             Message::Save => {
                 self.save_all_pokemons();
             }
+            Message::RestorePokemonSelected(history_index) => {
+                return self.restore_pokemon_from_history(history_index);
+            }
+            Message::CloseRestoreWindow => {
+                return self.close_restore_window();
+            }
             Message::RuntimeMsg(runtime_msg) => match runtime_msg {
                 RuntimeMessage::PreviewFrameReceived(frame) => {
                     self.latest_preview = Some(frame);
@@ -209,6 +225,8 @@ impl PokeEditorApp {
             Message::WindowClosed(id) => {
                 if self.preview_window_id == Some(id) {
                     self.preview_window_id = None;
+                } else if self.restore_window.as_ref().map(|state| state.id) == Some(id) {
+                    self.restore_window = None;
                 } else if self.main_window_id == Some(id) {
                     return iced::exit();
                 }
@@ -248,46 +266,117 @@ impl PokeEditorApp {
     }
 
     fn save_all_pokemons(&mut self) {
-        let saved_party = SavedParty {
-            pokemons: self
-                .pokemons
-                .iter()
-                .map(|pokemon| pokemon.to_build())
-                .collect(),
-        };
+        let current_party = self
+            .pokemons
+            .iter()
+            .map(|pokemon| pokemon.to_build())
+            .collect::<Vec<_>>();
+        let mut saved_party = self.saved_party.clone();
+        saved_party.pokemons = current_party.clone();
+        saved_party.remember_pokemons(current_party);
         self.persist_saved_party(saved_party, "パーティ全体を保存しました".to_string());
     }
 
     fn save_pokemon(&mut self, index: usize) {
+        let build = self.pokemons[index].to_build();
+        if build.is_blank() {
+            self.editor_status = Some(format!("ポケモン{}は未入力のため保存できません", index + 1));
+            return;
+        }
+
         let mut saved_party = self.saved_party.clone();
         if saved_party.pokemons.len() <= index {
             saved_party.pokemons.resize(index + 1, Default::default());
         }
-        saved_party.pokemons[index] = self.pokemons[index].to_build();
+        saved_party.pokemons[index] = build.clone();
+        saved_party.remember_pokemon(build);
 
-        self.persist_saved_party(saved_party, format!("ポケモン{}を保存しました", index + 1));
+        self.persist_saved_party(
+            saved_party,
+            format!("ポケモン{}を保存済み一覧に追加しました", index + 1),
+        );
     }
 
-    fn restore_pokemon(&mut self, index: usize) {
-        let Some(build) = self.saved_party.pokemons.get(index).cloned() else {
-            self.editor_status = Some(format!("ポケモン{}の保存済みデータがありません", index + 1));
-            return;
+    fn open_restore_window(&mut self, index: usize) -> Task<Message> {
+        if self.saved_party.saved_pokemons.is_empty() {
+            self.editor_status = Some("保存済みポケモンがまだありません".to_string());
+            return Task::none();
+        }
+
+        if let Some(window_state) = self.restore_window.as_mut() {
+            window_state.target_index = index;
+            self.editor_status = Some(format!("ポケモン{}の復元候補を表示しています", index + 1));
+            return Task::none();
+        }
+
+        let (id, task) = window::open(window::Settings {
+            size: Size {
+                width: 760.0,
+                height: 720.0,
+            },
+            ..Default::default()
+        });
+        self.restore_window = Some(RestoreWindowState {
+            id,
+            target_index: index,
+        });
+        self.editor_status = Some(format!("ポケモン{}の復元候補を開きました", index + 1));
+        task.discard()
+    }
+
+    fn restore_pokemon_from_history(&mut self, history_index: usize) -> Task<Message> {
+        let Some(window_state) = self.restore_window else {
+            self.editor_status = Some("復元先のスロットが見つかりません".to_string());
+            return Task::none();
+        };
+        let Some(build) = self.saved_party.saved_pokemons.get(history_index).cloned() else {
+            self.editor_status = Some("選択した保存済みポケモンが見つかりません".to_string());
+            return Task::none();
         };
 
-        let label = self.pokemons[index].label.clone();
-        self.pokemons[index] = PokemonState::from_saved_build(label, build);
-        self.editor_status = Some(format!("ポケモン{}を復元しました", index + 1));
+        let mut saved_party = self.saved_party.clone();
+        if saved_party.pokemons.len() <= window_state.target_index {
+            saved_party
+                .pokemons
+                .resize(window_state.target_index + 1, Default::default());
+        }
+        saved_party.pokemons[window_state.target_index] = build.clone();
+
+        if self.persist_saved_party(
+            saved_party,
+            format!(
+                "{}をポケモン{}に復元しました",
+                display_pokemon_name(&build),
+                window_state.target_index + 1
+            ),
+        ) {
+            let label = self.pokemons[window_state.target_index].label.clone();
+            self.pokemons[window_state.target_index] = PokemonState::from_saved_build(label, build);
+            return self.close_restore_window();
+        }
+
+        Task::none()
     }
 
-    fn persist_saved_party(&mut self, saved_party: SavedParty, success_message: String) {
+    fn close_restore_window(&mut self) -> Task<Message> {
+        let Some(window_state) = self.restore_window else {
+            return Task::none();
+        };
+
+        window::close(window_state.id)
+    }
+
+    fn persist_saved_party(&mut self, saved_party: SavedParty, success_message: String) -> bool {
         match self.services.save_party(saved_party.clone()) {
             Ok(()) => {
                 self.saved_party = saved_party;
                 self.editor_status = Some(success_message);
+                true
             }
             Err(error) => {
                 eprintln!("Failed to save party: {error}");
                 self.editor_status = Some(format!("保存に失敗しました: {error}"));
+                false
             }
         }
     }
@@ -377,8 +466,8 @@ impl PokeEditorApp {
         }
     }
 
-    fn has_saved_pokemon(&self, index: usize) -> bool {
-        self.saved_party.pokemons.get(index).is_some()
+    fn saved_pokemon_count(&self) -> usize {
+        self.saved_party.saved_pokemons.len()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -393,6 +482,9 @@ impl PokeEditorApp {
     pub fn view(&self, id: window::Id) -> Element<'_, Message> {
         if self.preview_window_id == Some(id) {
             return self.preview_view();
+        }
+        if self.restore_window.as_ref().map(|state| state.id) == Some(id) {
+            return self.restore_picker_view();
         }
 
         let tab_bar = row![
@@ -419,6 +511,8 @@ impl PokeEditorApp {
     pub fn title(&self, id: window::Id) -> String {
         if self.preview_window_id == Some(id) {
             "Camera Preview".to_string()
+        } else if self.restore_window.as_ref().map(|state| state.id) == Some(id) {
+            "Saved Pokemon Restore".to_string()
         } else {
             "Pokemon Editor".to_string()
         }
@@ -431,23 +525,78 @@ impl PokeEditorApp {
             .into()
     }
 
+    fn restore_picker_view(&self) -> Element<'_, Message> {
+        let Some(window_state) = self.restore_window else {
+            return container(text("復元ウィンドウを初期化できませんでした").font(JAPANESE_FONT))
+                .padding(20)
+                .into();
+        };
+
+        let header = row![
+            column![
+                text("保存済みポケモン一覧").font(JAPANESE_FONT).size(28),
+                text(format!("復元先: ポケモン{}", window_state.target_index + 1))
+                    .font(JAPANESE_FONT)
+                    .size(14),
+            ]
+            .spacing(4),
+            button(text("閉じる").font(JAPANESE_FONT))
+                .on_press(Message::CloseRestoreWindow)
+                .padding(10),
+        ]
+        .spacing(20)
+        .align_y(iced::Alignment::Center);
+
+        let content: Element<'_, Message> = if self.saved_party.saved_pokemons.is_empty() {
+            container(
+                text("保存済みポケモンがまだありません")
+                    .font(JAPANESE_FONT)
+                    .size(16),
+            )
+            .padding(20)
+            .width(Length::Fill)
+            .into()
+        } else {
+            let cards = column(
+                self.saved_party
+                    .saved_pokemons
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .map(|(history_index, pokemon)| {
+                        saved_pokemon_card(history_index, pokemon).into()
+                    }),
+            )
+            .spacing(12);
+
+            scrollable(cards).into()
+        };
+
+        container(column![header, content].spacing(20).padding(20))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
+
     fn editor_view(&self) -> Element<'_, Message> {
+        let has_saved_pokemon_library = self.saved_pokemon_count() > 0;
+
         let grid = row![
             column![
-                PokemonView::view(&self.pokemons[0], self.has_saved_pokemon(0))
+                PokemonView::view(&self.pokemons[0], has_saved_pokemon_library)
                     .map(|m| Message::PokemonMsg(0, m)),
-                PokemonView::view(&self.pokemons[2], self.has_saved_pokemon(2))
+                PokemonView::view(&self.pokemons[2], has_saved_pokemon_library)
                     .map(|m| Message::PokemonMsg(2, m)),
-                PokemonView::view(&self.pokemons[4], self.has_saved_pokemon(4))
+                PokemonView::view(&self.pokemons[4], has_saved_pokemon_library)
                     .map(|m| Message::PokemonMsg(4, m)),
             ]
             .spacing(20),
             column![
-                PokemonView::view(&self.pokemons[1], self.has_saved_pokemon(1))
+                PokemonView::view(&self.pokemons[1], has_saved_pokemon_library)
                     .map(|m| Message::PokemonMsg(1, m)),
-                PokemonView::view(&self.pokemons[3], self.has_saved_pokemon(3))
+                PokemonView::view(&self.pokemons[3], has_saved_pokemon_library)
                     .map(|m| Message::PokemonMsg(3, m)),
-                PokemonView::view(&self.pokemons[5], self.has_saved_pokemon(5))
+                PokemonView::view(&self.pokemons[5], has_saved_pokemon_library)
                     .map(|m| Message::PokemonMsg(5, m)),
             ]
             .spacing(20),
@@ -465,7 +614,13 @@ impl PokeEditorApp {
 
         let mut content = column![
             header,
-            text("各ポケモンカード右上のボタンで個別に保存・復元できます")
+            text(format!(
+                "保存済みポケモン一覧: {} 件",
+                self.saved_pokemon_count()
+            ))
+            .font(JAPANESE_FONT)
+            .size(14),
+            text("各カードで保存すると一覧へ追加され、復元は別ウィンドウから選択できます")
                 .font(JAPANESE_FONT)
                 .size(14)
         ]
@@ -729,6 +884,134 @@ impl PokeEditorApp {
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
+    }
+}
+
+fn saved_pokemon_card<'a>(history_index: usize, pokemon: &'a PokemonBuild) -> Element<'a, Message> {
+    let mut content = column![
+        text(format!("保存履歴 {}", history_index + 1))
+            .font(JAPANESE_FONT)
+            .size(12)
+            .color(Color::from_rgb(0.45, 0.45, 0.45)),
+        text(display_pokemon_name(pokemon))
+            .font(JAPANESE_FONT)
+            .size(20),
+    ]
+    .spacing(6);
+
+    if let Some(meta) = format_saved_pokemon_meta(pokemon) {
+        content = content.push(text(meta).font(JAPANESE_FONT).size(13));
+    }
+
+    if let Some(effort_values) = format_saved_pokemon_effort_values(pokemon) {
+        content = content.push(text(effort_values).font(JAPANESE_FONT).size(13));
+    }
+
+    if let Some(moves) = format_saved_pokemon_moves(pokemon) {
+        content = content.push(text(moves).font(JAPANESE_FONT).size(13));
+    }
+
+    content = content.push(
+        button(text("このポケモンを復元").font(JAPANESE_FONT))
+            .on_press(Message::RestorePokemonSelected(history_index))
+            .padding([8, 12]),
+    );
+
+    container(content)
+        .padding(14)
+        .width(Length::Fill)
+        .style(|_| container::Style {
+            border: Border {
+                color: Color::from_rgb(0.8, 0.8, 0.8),
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+fn display_pokemon_name(pokemon: &PokemonBuild) -> &str {
+    let species = pokemon.species_name.trim();
+    if species.is_empty() {
+        "（名前未入力）"
+    } else {
+        species
+    }
+}
+
+fn format_saved_pokemon_meta(pokemon: &PokemonBuild) -> Option<String> {
+    let mut parts = Vec::new();
+
+    if let Some(item) = pokemon
+        .item_name
+        .as_deref()
+        .filter(|item| !item.trim().is_empty())
+    {
+        parts.push(format!("持ち物: {item}"));
+    }
+    if let Some(ability) = pokemon
+        .ability_name
+        .as_deref()
+        .filter(|ability| !ability.trim().is_empty())
+    {
+        parts.push(format!("特性: {ability}"));
+    }
+    if let Some(nature) = pokemon
+        .nature_name
+        .as_deref()
+        .filter(|nature| !nature.trim().is_empty())
+    {
+        parts.push(format!("性格: {nature}"));
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" / "))
+    }
+}
+
+fn format_saved_pokemon_effort_values(pokemon: &PokemonBuild) -> Option<String> {
+    let stats = [
+        ("H", pokemon.effort_values.h),
+        ("A", pokemon.effort_values.a),
+        ("B", pokemon.effort_values.b),
+        ("C", pokemon.effort_values.c),
+        ("D", pokemon.effort_values.d),
+        ("S", pokemon.effort_values.s),
+    ]
+    .into_iter()
+    .filter(|(_, value)| *value > 0)
+    .map(|(label, value)| format!("{label}{value}"))
+    .collect::<Vec<_>>();
+
+    if stats.is_empty() {
+        None
+    } else {
+        Some(format!("努力値: {}", stats.join(" ")))
+    }
+}
+
+fn format_saved_pokemon_moves(pokemon: &PokemonBuild) -> Option<String> {
+    let moves = pokemon
+        .moves
+        .moves
+        .iter()
+        .filter_map(|move_name| {
+            let move_name = move_name.trim();
+            if move_name.is_empty() {
+                None
+            } else {
+                Some(move_name.to_string())
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if moves.is_empty() {
+        None
+    } else {
+        Some(format!("技: {}", moves.join(" / ")))
     }
 }
 

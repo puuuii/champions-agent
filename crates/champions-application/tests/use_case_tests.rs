@@ -273,6 +273,7 @@ fn sample_ocr_image() -> OcrImage {
 fn load_party_returns_saved_party() {
     let party = SavedParty {
         pokemons: vec![sample_pokemon("ピカチュウ")],
+        ..Default::default()
     };
     let repo = FakePartyRepository::new(party.clone());
     let uc = LoadPartyUseCase::new(&repo);
@@ -300,6 +301,7 @@ fn save_party_persists_data() {
 
     let party = SavedParty {
         pokemons: vec![sample_pokemon("リザードン"), sample_pokemon("フシギダネ")],
+        ..Default::default()
     };
     let result = uc.execute(SavePartyCommand { party }).unwrap();
 
@@ -317,6 +319,7 @@ fn save_party_warns_on_empty_species_name() {
 
     let party = SavedParty {
         pokemons: vec![sample_pokemon(""), sample_pokemon("ピカチュウ")],
+        ..Default::default()
     };
     let result = uc.execute(SavePartyCommand { party }).unwrap();
 
