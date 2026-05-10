@@ -210,12 +210,12 @@ impl PokemonState {
 pub struct PokemonView;
 
 impl PokemonView {
-    pub fn view(
+    pub fn view<'a>(
         slot_index: usize,
-        state: &PokemonState,
+        state: &'a PokemonState,
         can_restore_from_library: bool,
-        save_status: Option<&str>,
-    ) -> Element<'_, Message> {
+        save_status: Option<&'a str>,
+    ) -> Element<'a, Message> {
         let save_button = button(text("保存").font(JAPANESE_FONT))
             .on_press(Message::SaveRequested)
             .padding([6, 10]);
