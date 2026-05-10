@@ -2,16 +2,35 @@ use super::JAPANESE_FONT;
 use champions_domain::party::{EffortValueSpread, MoveSet, PokemonBuild};
 use iced::{
     Border, Color, Element,
-    widget::{button, column, container, row, text, text_input},
+    widget::{Id, button, column, container, row, text, text_input},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldType {
     Species,
     Move(usize),
-    Nature,
     Item,
     Ability,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputScope {
+    Editor(usize),
+    Restore(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputField {
+    Species,
+    Item,
+    H,
+    A,
+    B,
+    C,
+    D,
+    S,
+    Ability,
+    Move(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -30,7 +49,6 @@ pub struct PokemonState {
     pub c: String,
     pub d: String,
     pub s: String,
-    pub nature: String,
     pub ability: String,
     pub moves: [String; 4],
 
@@ -48,7 +66,6 @@ pub enum Message {
     CChanged(String),
     DChanged(String),
     SChanged(String),
-    NatureChanged(String),
     AbilityChanged(String),
     MoveChanged(usize, String),
     SuggestionSelected(String),
@@ -67,7 +84,6 @@ impl PokemonState {
             c: String::new(),
             d: String::new(),
             s: String::new(),
-            nature: String::new(),
             ability: String::new(),
             moves: Default::default(),
             suggestions: Vec::new(),
@@ -85,7 +101,6 @@ impl PokemonState {
             c: build.effort_values.c.to_string(),
             d: build.effort_values.d.to_string(),
             s: build.effort_values.s.to_string(),
-            nature: build.nature_name.unwrap_or_default(),
             ability: build.ability_name.unwrap_or_default(),
             moves: build.moves.moves,
             suggestions: Vec::new(),
@@ -106,11 +121,7 @@ impl PokemonState {
             } else {
                 Some(self.ability.clone())
             },
-            nature_name: if self.nature.is_empty() {
-                None
-            } else {
-                Some(self.nature.clone())
-            },
+            nature_name: None,
             effort_values: EffortValueSpread {
                 h: self.h.parse().unwrap_or(0),
                 a: self.a.parse().unwrap_or(0),
@@ -153,14 +164,6 @@ impl PokemonState {
             Message::CChanged(v) => self.c = self.validate_stat(v),
             Message::DChanged(v) => self.d = self.validate_stat(v),
             Message::SChanged(v) => self.s = self.validate_stat(v),
-            Message::NatureChanged(v) => {
-                self.nature = v;
-                self.active_field = Some(FieldType::Nature);
-                return Some(SuggestionRequest {
-                    field: FieldType::Nature,
-                    query: self.nature.clone(),
-                });
-            }
             Message::AbilityChanged(v) => {
                 self.ability = v;
                 self.active_field = Some(FieldType::Ability);
@@ -182,7 +185,6 @@ impl PokemonState {
                     match field {
                         FieldType::Species => self.species = v,
                         FieldType::Item => self.item = v,
-                        FieldType::Nature => self.nature = v,
                         FieldType::Move(i) => self.moves[i] = v,
                         FieldType::Ability => self.ability = v,
                     }
@@ -208,127 +210,42 @@ impl PokemonState {
 pub struct PokemonView;
 
 impl PokemonView {
-    pub fn view(state: &PokemonState, can_restore_from_library: bool) -> Element<'_, Message> {
-        let stat_input = |label: &'static str, value: &str, on_change: fn(String) -> Message| {
-            row![
-                text(label).width(20),
-                text_input("数値", value)
-                    .on_input(on_change)
-                    .font(JAPANESE_FONT)
-                    .width(60)
-            ]
-            .spacing(5)
-        };
-
-        let species_field = Self::field_with_suggestions(
-            "名前:",
-            &state.species,
-            FieldType::Species,
-            &state.suggestions,
-            state.active_field,
-            Message::SpeciesChanged,
-        );
-
-        let item_field = Self::field_with_suggestions(
-            "持物:",
-            &state.item,
-            FieldType::Item,
-            &state.suggestions,
-            state.active_field,
-            Message::ItemChanged,
-        );
-
-        let nature_field = Self::field_with_suggestions(
-            "性格:",
-            &state.nature,
-            FieldType::Nature,
-            &state.suggestions,
-            state.active_field,
-            Message::NatureChanged,
-        );
-
-        let stats_col1 = column![
-            stat_input("H:", &state.h, Message::HChanged),
-            stat_input("A:", &state.a, Message::AChanged),
-            stat_input("C:", &state.c, Message::CChanged),
-            nature_field,
-        ]
-        .spacing(10);
-
-        let ability_field = Self::field_with_suggestions(
-            "特性:",
-            &state.ability,
-            FieldType::Ability,
-            &state.suggestions,
-            state.active_field,
-            Message::AbilityChanged,
-        );
-
-        let stats_col2 = column![
-            stat_input("S:", &state.s, Message::SChanged),
-            stat_input("B:", &state.b, Message::BChanged),
-            stat_input("D:", &state.d, Message::DChanged),
-            ability_field,
-        ]
-        .spacing(10);
-
-        let moves_col = column![
-            Self::field_with_suggestions(
-                "技1:",
-                &state.moves[0],
-                FieldType::Move(0),
-                &state.suggestions,
-                state.active_field,
-                |v| Message::MoveChanged(0, v)
-            ),
-            Self::field_with_suggestions(
-                "技2:",
-                &state.moves[1],
-                FieldType::Move(1),
-                &state.suggestions,
-                state.active_field,
-                |v| Message::MoveChanged(1, v)
-            ),
-            Self::field_with_suggestions(
-                "技3:",
-                &state.moves[2],
-                FieldType::Move(2),
-                &state.suggestions,
-                state.active_field,
-                |v| Message::MoveChanged(2, v)
-            ),
-            Self::field_with_suggestions(
-                "技4:",
-                &state.moves[3],
-                FieldType::Move(3),
-                &state.suggestions,
-                state.active_field,
-                |v| Message::MoveChanged(3, v)
-            ),
-        ]
-        .spacing(10);
-
-        let save_button = button(text("この枠を保存").font(JAPANESE_FONT))
+    pub fn view(
+        slot_index: usize,
+        state: &PokemonState,
+        can_restore_from_library: bool,
+        save_status: Option<&str>,
+    ) -> Element<'_, Message> {
+        let save_button = button(text("保存").font(JAPANESE_FONT))
             .on_press(Message::SaveRequested)
             .padding([6, 10]);
 
-        let restore_button = button(text("一覧から復元").font(JAPANESE_FONT)).padding([6, 10]);
+        let restore_button = button(text("一覧").font(JAPANESE_FONT)).padding([6, 10]);
         let restore_button = if can_restore_from_library {
             restore_button.on_press(Message::RestoreRequested)
         } else {
             restore_button
         };
 
+        let mut action_row = row![save_button, restore_button]
+            .spacing(10)
+            .align_y(iced::Alignment::Center);
+
+        if let Some(save_status) = save_status {
+            action_row = action_row.push(
+                text(save_status)
+                    .font(JAPANESE_FONT)
+                    .size(14)
+                    .color(Color::from_rgb(0.7, 0.15, 0.15)),
+            );
+        }
+
         container(
             column![
-                row![save_button, restore_button,]
-                    .spacing(10)
-                    .align_y(iced::Alignment::Center),
-                species_field,
-                item_field,
-                row![stats_col1, stats_col2, moves_col].spacing(20)
+                action_row,
+                Self::form(state, InputScope::Editor(slot_index))
             ]
-            .spacing(5),
+            .spacing(10),
         )
         .padding(15)
         .style(|_| container::Style {
@@ -342,10 +259,125 @@ impl PokemonView {
         .into()
     }
 
+    pub fn restore_form(history_index: usize, state: &PokemonState) -> Element<'_, Message> {
+        Self::form(state, InputScope::Restore(history_index))
+    }
+
+    fn form(state: &PokemonState, scope: InputScope) -> Element<'_, Message> {
+        let stat_input = |label: &'static str,
+                          value: &str,
+                          on_change: fn(String) -> Message,
+                          field: InputField| {
+            row![
+                text(label).width(20),
+                text_input("数値", value)
+                    .id(input_id(scope, field))
+                    .on_input(on_change)
+                    .font(JAPANESE_FONT)
+                    .width(60)
+            ]
+            .spacing(5)
+        };
+
+        let species_field = Self::field_with_suggestions(
+            "名前:",
+            &state.species,
+            FieldType::Species,
+            input_id(scope, InputField::Species),
+            &state.suggestions,
+            state.active_field,
+            Message::SpeciesChanged,
+        );
+
+        let item_field = Self::field_with_suggestions(
+            "持物:",
+            &state.item,
+            FieldType::Item,
+            input_id(scope, InputField::Item),
+            &state.suggestions,
+            state.active_field,
+            Message::ItemChanged,
+        );
+
+        let stats_col1 = column![
+            stat_input("H:", &state.h, Message::HChanged, InputField::H),
+            stat_input("A:", &state.a, Message::AChanged, InputField::A),
+            stat_input("C:", &state.c, Message::CChanged, InputField::C),
+        ]
+        .spacing(10);
+
+        let ability_field = Self::field_with_suggestions(
+            "特性:",
+            &state.ability,
+            FieldType::Ability,
+            input_id(scope, InputField::Ability),
+            &state.suggestions,
+            state.active_field,
+            Message::AbilityChanged,
+        );
+
+        let stats_col2 = column![
+            stat_input("S:", &state.s, Message::SChanged, InputField::S),
+            stat_input("B:", &state.b, Message::BChanged, InputField::B),
+            stat_input("D:", &state.d, Message::DChanged, InputField::D),
+            ability_field,
+        ]
+        .spacing(10);
+
+        let moves_col = column![
+            Self::field_with_suggestions(
+                "技1:",
+                &state.moves[0],
+                FieldType::Move(0),
+                input_id(scope, InputField::Move(0)),
+                &state.suggestions,
+                state.active_field,
+                |v| Message::MoveChanged(0, v)
+            ),
+            Self::field_with_suggestions(
+                "技2:",
+                &state.moves[1],
+                FieldType::Move(1),
+                input_id(scope, InputField::Move(1)),
+                &state.suggestions,
+                state.active_field,
+                |v| Message::MoveChanged(1, v)
+            ),
+            Self::field_with_suggestions(
+                "技3:",
+                &state.moves[2],
+                FieldType::Move(2),
+                input_id(scope, InputField::Move(2)),
+                &state.suggestions,
+                state.active_field,
+                |v| Message::MoveChanged(2, v)
+            ),
+            Self::field_with_suggestions(
+                "技4:",
+                &state.moves[3],
+                FieldType::Move(3),
+                input_id(scope, InputField::Move(3)),
+                &state.suggestions,
+                state.active_field,
+                |v| Message::MoveChanged(3, v)
+            ),
+        ]
+        .spacing(10);
+
+        column![
+            species_field,
+            item_field,
+            row![stats_col1, stats_col2, moves_col].spacing(20)
+        ]
+        .spacing(5)
+        .into()
+    }
+
     fn field_with_suggestions<'a>(
         label: &'static str,
         value: &'a str,
         field_type: FieldType,
+        id: Id,
         suggestions: &'a [String],
         active_field: Option<FieldType>,
         on_change: impl Fn(String) -> Message + 'static,
@@ -354,6 +386,7 @@ impl PokemonView {
             row![
                 text(label).width(40),
                 text_input(label, value)
+                    .id(id)
                     .on_input(on_change)
                     .font(JAPANESE_FONT)
                     .width(120)
@@ -385,5 +418,67 @@ impl PokemonView {
             );
         }
         col.into()
+    }
+}
+
+pub fn editor_input_ids(slot_index: usize) -> Vec<Id> {
+    ordered_input_fields()
+        .into_iter()
+        .map(|field| input_id(InputScope::Editor(slot_index), field))
+        .collect()
+}
+
+pub fn restore_input_ids(history_index: usize) -> Vec<Id> {
+    ordered_input_fields()
+        .into_iter()
+        .map(|field| input_id(InputScope::Restore(history_index), field))
+        .collect()
+}
+
+fn ordered_input_fields() -> [InputField; 13] {
+    [
+        InputField::Species,
+        InputField::Item,
+        InputField::H,
+        InputField::S,
+        InputField::Move(0),
+        InputField::A,
+        InputField::B,
+        InputField::Move(1),
+        InputField::C,
+        InputField::D,
+        InputField::Move(2),
+        InputField::Ability,
+        InputField::Move(3),
+    ]
+}
+
+fn input_id(scope: InputScope, field: InputField) -> Id {
+    let scope_prefix = match scope {
+        InputScope::Editor(slot_index) => format!("party-editor-{slot_index}"),
+        InputScope::Restore(history_index) => format!("restore-editor-{history_index}"),
+    };
+
+    format!("{scope_prefix}-{}", field.id_suffix()).into()
+}
+
+impl InputField {
+    fn id_suffix(self) -> &'static str {
+        match self {
+            Self::Species => "species",
+            Self::Item => "item",
+            Self::H => "h",
+            Self::A => "a",
+            Self::B => "b",
+            Self::C => "c",
+            Self::D => "d",
+            Self::S => "s",
+            Self::Ability => "ability",
+            Self::Move(0) => "move-0",
+            Self::Move(1) => "move-1",
+            Self::Move(2) => "move-2",
+            Self::Move(3) => "move-3",
+            Self::Move(_) => unreachable!("move index is limited to four slots"),
+        }
     }
 }
