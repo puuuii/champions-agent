@@ -140,30 +140,20 @@ impl CsvCatalogRepository {
         Self::load_names_csv(path).unwrap_or_default()
     }
 
-    fn prefix_match(names: &[String], query: &str, limit: usize) -> Vec<String> {
-        if query.is_empty() {
-            return Vec::new();
-        }
-        names
-            .iter()
-            .filter(|n| n.starts_with(query))
-            .take(limit)
-            .cloned()
-            .collect()
-    }
-
     fn partial_match(names: &[String], query: &str, limit: usize) -> Vec<String> {
-        if query.is_empty() {
+        if query.is_empty() || limit == 0 {
             return Vec::new();
         }
 
+        let normalized_query = Self::normalize_for_match(query);
         let mut prefix_matches = Vec::new();
         let mut contains_matches = Vec::new();
 
         for name in names {
-            if name.starts_with(query) {
+            let normalized_name = Self::normalize_for_match(name);
+            if normalized_name.starts_with(&normalized_query) {
                 prefix_matches.push(name.clone());
-            } else if name.contains(query) {
+            } else if normalized_name.contains(&normalized_query) {
                 contains_matches.push(name.clone());
             }
         }
@@ -176,6 +166,17 @@ impl CsvCatalogRepository {
         prefix_matches.truncate(limit);
         prefix_matches
     }
+
+    fn normalize_for_match(value: &str) -> String {
+        value.chars().map(Self::normalize_kana_char).collect()
+    }
+
+    fn normalize_kana_char(ch: char) -> char {
+        match ch {
+            '\u{30A1}'..='\u{30F6}' => char::from_u32(ch as u32 - 0x60).unwrap_or(ch),
+            _ => ch,
+        }
+    }
 }
 
 impl CatalogRepository for CsvCatalogRepository {
@@ -184,19 +185,19 @@ impl CatalogRepository for CsvCatalogRepository {
     }
 
     fn suggest_moves(&self, query: &str, limit: usize) -> Result<Vec<String>, CatalogError> {
-        Ok(Self::prefix_match(&self.move_names, query, limit))
+        Ok(Self::partial_match(&self.move_names, query, limit))
     }
 
     fn suggest_items(&self, query: &str, limit: usize) -> Result<Vec<String>, CatalogError> {
-        Ok(Self::prefix_match(&self.item_names, query, limit))
+        Ok(Self::partial_match(&self.item_names, query, limit))
     }
 
     fn suggest_natures(&self, query: &str, limit: usize) -> Result<Vec<String>, CatalogError> {
-        Ok(Self::prefix_match(&self.nature_names, query, limit))
+        Ok(Self::partial_match(&self.nature_names, query, limit))
     }
 
     fn suggest_abilities(&self, query: &str, limit: usize) -> Result<Vec<String>, CatalogError> {
-        Ok(Self::prefix_match(&self.ability_names, query, limit))
+        Ok(Self::partial_match(&self.ability_names, query, limit))
     }
 
     fn load_battle_master_data(&self) -> Result<BattleMasterData, CatalogError> {
@@ -343,6 +344,53 @@ mod tests {
         assert_eq!(
             result,
             vec!["フシギソウ".to_string(), "フシギダネ".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_partial_match_treats_hiragana_and_katakana_as_equivalent() {
+        let names = vec![
+            "ピカチュウ".to_string(),
+            "ライチュウ".to_string(),
+            "フシギダネ".to_string(),
+        ];
+        let result = CsvCatalogRepository::partial_match(&names, "ちゅ", 10);
+        assert_eq!(
+            result,
+            vec!["ピカチュウ".to_string(), "ライチュウ".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_all_suggest_methods_use_kana_insensitive_partial_matching() {
+        let repo = CsvCatalogRepository {
+            master_data_dir: PathBuf::new(),
+            species_names: vec!["ピカチュウ".to_string(), "ライチュウ".to_string()],
+            move_names: vec!["10まんボルト".to_string(), "アイアンヘッド".to_string()],
+            item_names: vec!["いのちのたま".to_string(), "とつげきチョッキ".to_string()],
+            nature_names: vec!["ひかえめ".to_string(), "おくびょう".to_string()],
+            ability_names: vec!["せいでんき".to_string(), "マルチスケイル".to_string()],
+        };
+
+        assert_eq!(
+            repo.suggest_species("ちゅ", 10).unwrap(),
+            vec!["ピカチュウ".to_string(), "ライチュウ".to_string()]
+        );
+        assert_eq!(
+            repo.suggest_moves("アン", 10).unwrap(),
+            vec!["アイアンヘッド".to_string()]
+        );
+        assert_eq!(
+            repo.suggest_items("チョッ", 10).unwrap(),
+            vec!["とつげきチョッキ".to_string()]
+        );
+        assert_eq!(
+            repo.suggest_natures("カエ", 10).unwrap(),
+            vec!["ひかえめ".to_string()]
+        );
+        assert_eq!(
+            repo.suggest_abilities("デン", 10).unwrap(),
+            vec!["せいでんき".to_string()]
         );
     }
 }

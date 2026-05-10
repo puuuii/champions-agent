@@ -58,61 +58,68 @@ impl FakeCatalogRepository {
             master_data: fixture_master_data(),
         }
     }
+
+    fn suggest_names(names: &[String], query: &str, limit: usize) -> Vec<String> {
+        if limit == 0 {
+            return Vec::new();
+        }
+        if query.is_empty() {
+            return names.iter().take(limit).cloned().collect();
+        }
+
+        let normalized_query = Self::normalize_for_match(query);
+        let mut prefix_matches = Vec::new();
+        let mut contains_matches = Vec::new();
+
+        for name in names {
+            let normalized_name = Self::normalize_for_match(name);
+            if normalized_name.starts_with(&normalized_query) {
+                prefix_matches.push(name.clone());
+            } else if normalized_name.contains(&normalized_query) {
+                contains_matches.push(name.clone());
+            }
+        }
+
+        prefix_matches.extend(
+            contains_matches
+                .into_iter()
+                .take(limit.saturating_sub(prefix_matches.len())),
+        );
+        prefix_matches.truncate(limit);
+        prefix_matches
+    }
+
+    fn normalize_for_match(value: &str) -> String {
+        value.chars().map(Self::normalize_kana_char).collect()
+    }
+
+    fn normalize_kana_char(ch: char) -> char {
+        match ch {
+            '\u{30A1}'..='\u{30F6}' => char::from_u32(ch as u32 - 0x60).unwrap_or(ch),
+            _ => ch,
+        }
+    }
 }
 
 impl CatalogRepository for FakeCatalogRepository {
     fn suggest_species(&self, query: &str, limit: usize) -> Result<Vec<String>, CatalogError> {
-        if query.is_empty() {
-            return Ok(self.species.iter().take(limit).cloned().collect());
-        }
-
-        Ok(self
-            .species
-            .iter()
-            .filter(|s| s.contains(query))
-            .take(limit)
-            .cloned()
-            .collect())
+        Ok(Self::suggest_names(&self.species, query, limit))
     }
 
     fn suggest_moves(&self, query: &str, limit: usize) -> Result<Vec<String>, CatalogError> {
-        Ok(self
-            .moves
-            .iter()
-            .filter(|s| s.starts_with(query))
-            .take(limit)
-            .cloned()
-            .collect())
+        Ok(Self::suggest_names(&self.moves, query, limit))
     }
 
     fn suggest_items(&self, query: &str, limit: usize) -> Result<Vec<String>, CatalogError> {
-        Ok(self
-            .items
-            .iter()
-            .filter(|s| s.starts_with(query))
-            .take(limit)
-            .cloned()
-            .collect())
+        Ok(Self::suggest_names(&self.items, query, limit))
     }
 
     fn suggest_natures(&self, query: &str, limit: usize) -> Result<Vec<String>, CatalogError> {
-        Ok(self
-            .natures
-            .iter()
-            .filter(|s| s.starts_with(query))
-            .take(limit)
-            .cloned()
-            .collect())
+        Ok(Self::suggest_names(&self.natures, query, limit))
     }
 
     fn suggest_abilities(&self, query: &str, limit: usize) -> Result<Vec<String>, CatalogError> {
-        Ok(self
-            .abilities
-            .iter()
-            .filter(|s| s.starts_with(query))
-            .take(limit)
-            .cloned()
-            .collect())
+        Ok(Self::suggest_names(&self.abilities, query, limit))
     }
 
     fn load_battle_master_data(&self) -> Result<BattleMasterData, CatalogError> {
@@ -370,19 +377,35 @@ fn suggest_species_supports_partial_matching() {
 }
 
 #[test]
-fn suggest_moves_returns_matching() {
+fn suggest_moves_supports_partial_matching() {
     let catalog = FakeCatalogRepository::with_species(vec![]);
     let uc = SuggestNamesUseCase::new(&catalog);
 
     let result = uc
         .execute(SuggestNamesQuery {
             kind: SuggestKind::Move,
-            query: "10".to_string(),
+            query: "ボル".to_string(),
             limit: 10,
         })
         .unwrap();
 
     assert_eq!(result.suggestions, vec!["10まんボルト"]);
+}
+
+#[test]
+fn suggest_natures_supports_kana_insensitive_matching() {
+    let catalog = FakeCatalogRepository::with_species(vec![]);
+    let uc = SuggestNamesUseCase::new(&catalog);
+
+    let result = uc
+        .execute(SuggestNamesQuery {
+            kind: SuggestKind::Nature,
+            query: "カエ".to_string(),
+            limit: 10,
+        })
+        .unwrap();
+
+    assert_eq!(result.suggestions, vec!["ひかえめ"]);
 }
 
 #[test]
