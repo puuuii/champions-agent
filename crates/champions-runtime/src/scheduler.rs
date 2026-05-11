@@ -110,6 +110,12 @@ impl RecognitionScheduler {
         }
     }
 
+    pub fn force_selection_screen(&mut self, now: Instant) {
+        self.last_ocr_at = Some(now);
+        self.transition_to(SchedulerState::SelectionScreenEntered, now);
+        self.consecutive_misses = 0;
+    }
+
     pub fn reset(&mut self) {
         self.state = SchedulerState::Idle;
         self.last_ocr_at = None;

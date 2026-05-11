@@ -238,6 +238,9 @@ struct RuntimeControl {
     preview_max_width: AtomicU32,
     preview_target_fps: AtomicU8,
     recognition_generation: AtomicU64,
+    manual_scan_generation: AtomicU64,
+    manual_phase_generation: AtomicU64,
+    manual_phase_value: AtomicU8,
 }
 
 impl RuntimeControl {
@@ -249,6 +252,9 @@ impl RuntimeControl {
             preview_max_width: AtomicU32::new(preview_max_width),
             preview_target_fps: AtomicU8::new(preview_target_fps.max(1)),
             recognition_generation: AtomicU64::new(0),
+            manual_scan_generation: AtomicU64::new(0),
+            manual_phase_generation: AtomicU64::new(0),
+            manual_phase_value: AtomicU8::new(match_phase_to_u8(MatchPhase::Other)),
         }
     }
 
@@ -299,6 +305,28 @@ impl RuntimeControl {
 
     fn recognition_generation(&self) -> u64 {
         self.recognition_generation.load(Ordering::Relaxed)
+    }
+
+    fn request_manual_scan(&self) {
+        self.manual_scan_generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn manual_scan_generation(&self) -> u64 {
+        self.manual_scan_generation.load(Ordering::Relaxed)
+    }
+
+    fn set_manual_phase(&self, phase: MatchPhase) {
+        self.manual_phase_value
+            .store(match_phase_to_u8(phase), Ordering::Relaxed);
+        self.manual_phase_generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn manual_phase_generation(&self) -> u64 {
+        self.manual_phase_generation.load(Ordering::Relaxed)
+    }
+
+    fn manual_phase(&self) -> MatchPhase {
+        match_phase_from_u8(self.manual_phase_value.load(Ordering::Relaxed))
     }
 }
 
@@ -426,6 +454,8 @@ impl RecognitionWorker {
         let mut match_phase_tracker = MatchPhaseTracker::default();
         let mut attempt_id = 0_u64;
         let mut recognition_generation = self.control.recognition_generation();
+        let mut manual_scan_generation = 0_u64;
+        let mut manual_phase_generation = 0_u64;
 
         while !self.shutdown_token.is_shutdown() {
             let next_generation = self.control.recognition_generation();
@@ -437,6 +467,19 @@ impl RecognitionWorker {
                 }
                 recognition_generation = next_generation;
             }
+
+            self.apply_manual_phase_request(
+                &mut manual_phase_generation,
+                &mut battle_result_tracker,
+                &mut match_phase_tracker,
+            );
+            self.apply_manual_scan_request(
+                &mut manual_scan_generation,
+                &mut scheduler,
+                &mut battle_result_tracker,
+                &mut match_phase_tracker,
+                &mut attempt_id,
+            );
 
             if !self.control.is_capturing() || !self.control.is_recognition_enabled() {
                 std::thread::sleep(IDLE_POLL_INTERVAL);
@@ -451,6 +494,69 @@ impl RecognitionWorker {
             );
             std::thread::sleep(RECOGNITION_TICK_INTERVAL);
         }
+    }
+
+    fn apply_manual_phase_request(
+        &self,
+        manual_phase_generation: &mut u64,
+        battle_result_tracker: &mut BattleResultPhaseTracker,
+        match_phase_tracker: &mut MatchPhaseTracker,
+    ) {
+        let next_generation = self.control.manual_phase_generation();
+        if next_generation == *manual_phase_generation {
+            return;
+        }
+
+        *manual_phase_generation = next_generation;
+        let phase = self.control.manual_phase();
+        battle_result_tracker.set_phase_hint(phase);
+
+        if let Some(phase) = match_phase_tracker.force_phase(phase) {
+            send_match_phase_changed(&self.event_tx, &self.event_seq, phase);
+        }
+    }
+
+    fn apply_manual_scan_request(
+        &self,
+        manual_scan_generation: &mut u64,
+        scheduler: &mut RecognitionScheduler,
+        battle_result_tracker: &mut BattleResultPhaseTracker,
+        match_phase_tracker: &mut MatchPhaseTracker,
+        attempt_id: &mut u64,
+    ) {
+        let next_generation = self.control.manual_scan_generation();
+        if next_generation == *manual_scan_generation {
+            return;
+        }
+
+        *manual_scan_generation = next_generation;
+        self.run_manual_selection_scan(
+            scheduler,
+            battle_result_tracker,
+            match_phase_tracker,
+            attempt_id,
+        );
+    }
+
+    fn run_manual_selection_scan(
+        &self,
+        scheduler: &mut RecognitionScheduler,
+        battle_result_tracker: &mut BattleResultPhaseTracker,
+        match_phase_tracker: &mut MatchPhaseTracker,
+        attempt_id: &mut u64,
+    ) {
+        battle_result_tracker.set_phase_hint(MatchPhase::PokemonSelection);
+        if let Some(phase) = match_phase_tracker.force_phase(MatchPhase::PokemonSelection) {
+            send_match_phase_changed(&self.event_tx, &self.event_seq, phase);
+        }
+
+        let Some(frame) = self.latest_frame.peek() else {
+            return;
+        };
+
+        let now = Instant::now();
+        scheduler.force_selection_screen(now);
+        self.identify_party_from_frame(&frame, scheduler, attempt_id, now);
     }
 
     fn run_tick(
@@ -538,52 +644,63 @@ impl RecognitionWorker {
             }
         }
 
-        if scheduler.should_run_identification() {
+        if scheduler.should_run_identification()
+            && match_phase_tracker.phase() == MatchPhase::PokemonSelection
+        {
             let frame = match cached_frame.or_else(|| self.latest_frame.peek()) {
                 Some(frame) => frame,
                 None => return,
             };
+            self.identify_party_from_frame(&frame, scheduler, attempt_id, now);
+        }
+    }
 
-            let party_images = self.recognition_port.extract_party_slots(
-                frame.image.width,
-                frame.image.height,
-                &frame.image.bytes,
-            );
+    fn identify_party_from_frame(
+        &self,
+        frame: &CapturedFrame,
+        scheduler: &mut RecognitionScheduler,
+        attempt_id: &mut u64,
+        now: Instant,
+    ) {
+        let party_images = self.recognition_port.extract_party_slots(
+            frame.image.width,
+            frame.image.height,
+            &frame.image.bytes,
+        );
 
-            match self.recognition_port.identify_opponent_party(party_images) {
-                Ok(result) => {
-                    *attempt_id += 1;
-                    scheduler.on_identification_complete(now);
+        match self.recognition_port.identify_opponent_party(party_images) {
+            Ok(result) => {
+                *attempt_id += 1;
+                scheduler.on_identification_complete(now);
 
-                    let party_view = map_to_opponent_party_view(&result);
-                    let frame_sequence = frame.frame_sequence;
-                    let recognition_attempt_id = RecognitionAttemptId(*attempt_id);
+                let party_view = map_to_opponent_party_view(&result);
+                let frame_sequence = frame.frame_sequence;
+                let recognition_attempt_id = RecognitionAttemptId(*attempt_id);
 
-                    blocking_send_event(&self.event_tx, &self.event_seq, |event_sequence| {
-                        RuntimeEvent::OpponentPartyRecognized {
-                            event_sequence,
-                            frame_sequence,
-                            attempt_id: recognition_attempt_id,
-                            party: party_view,
-                        }
-                    });
+                blocking_send_event(&self.event_tx, &self.event_seq, |event_sequence| {
+                    RuntimeEvent::OpponentPartyRecognized {
+                        event_sequence,
+                        frame_sequence,
+                        attempt_id: recognition_attempt_id,
+                        party: party_view,
+                    }
+                });
 
-                    tracing::info!(
-                        "opponent party identified (attempt {}): {} pokemon, {} conflicts",
-                        attempt_id,
-                        result.recognized_party.pokemons.len(),
-                        result.conflicts.len()
-                    );
-                }
-                Err(error) => {
-                    tracing::error!("party identification failed: {error}");
-                    blocking_send_event(&self.event_tx, &self.event_seq, |event_sequence| {
-                        RuntimeEvent::Error {
-                            event_sequence,
-                            error: champions_interface::RuntimeError::RecognitionFailed(error),
-                        }
-                    });
-                }
+                tracing::info!(
+                    "opponent party identified (attempt {}): {} pokemon, {} conflicts",
+                    attempt_id,
+                    result.recognized_party.pokemons.len(),
+                    result.conflicts.len()
+                );
+            }
+            Err(error) => {
+                tracing::error!("party identification failed: {error}");
+                blocking_send_event(&self.event_tx, &self.event_seq, |event_sequence| {
+                    RuntimeEvent::Error {
+                        event_sequence,
+                        error: champions_interface::RuntimeError::RecognitionFailed(error),
+                    }
+                });
             }
         }
     }
@@ -616,6 +733,11 @@ impl BattleResultPhaseTracker {
         true
     }
 
+    fn set_phase_hint(&mut self, phase: MatchPhase) {
+        self.last_ocr_at = None;
+        self.is_battle_result_phase = phase == MatchPhase::BattleResult;
+    }
+
     fn reset(&mut self) {
         self.last_ocr_at = None;
         self.is_battle_result_phase = false;
@@ -628,7 +750,6 @@ struct MatchPhaseTracker {
 }
 
 impl MatchPhaseTracker {
-    #[cfg(test)]
     fn phase(&self) -> MatchPhase {
         self.phase
     }
@@ -642,9 +763,9 @@ impl MatchPhaseTracker {
             return None;
         }
 
-        match current_state {
+        let inferred_phase = match current_state {
             SchedulerState::SelectionScreenEntered | SchedulerState::SelectionScreenStable => {
-                self.update(MatchPhase::PokemonSelection)
+                Some(MatchPhase::PokemonSelection)
             }
             SchedulerState::SelectionScreenExited
                 if matches!(
@@ -652,24 +773,42 @@ impl MatchPhaseTracker {
                     SchedulerState::SelectionScreenEntered | SchedulerState::SelectionScreenStable
                 ) =>
             {
-                self.update(MatchPhase::Battle)
+                Some(MatchPhase::Battle)
             }
             _ => None,
-        }
+        };
+
+        inferred_phase.and_then(|phase| self.apply_inferred_phase(phase))
     }
 
     fn on_battle_result(&mut self, is_battle_result_phase: bool) -> Option<MatchPhase> {
         if is_battle_result_phase {
-            self.update(MatchPhase::BattleResult)
+            self.apply_inferred_phase(MatchPhase::BattleResult)
         } else if self.phase == MatchPhase::BattleResult {
-            self.update(MatchPhase::Other)
+            self.apply_inferred_phase(MatchPhase::Other)
         } else {
             None
         }
     }
 
+    fn force_phase(&mut self, new_phase: MatchPhase) -> Option<MatchPhase> {
+        self.update(new_phase)
+    }
+
     fn reset(&mut self) -> Option<MatchPhase> {
         self.update(MatchPhase::Other)
+    }
+
+    fn apply_inferred_phase(&mut self, inferred_phase: MatchPhase) -> Option<MatchPhase> {
+        if self.phase == inferred_phase {
+            return None;
+        }
+
+        if next_match_phase(self.phase) != inferred_phase {
+            return None;
+        }
+
+        self.update(inferred_phase)
     }
 
     fn update(&mut self, new_phase: MatchPhase) -> Option<MatchPhase> {
@@ -687,6 +826,15 @@ impl Default for MatchPhaseTracker {
         Self {
             phase: MatchPhase::Other,
         }
+    }
+}
+
+fn next_match_phase(current_phase: MatchPhase) -> MatchPhase {
+    match current_phase {
+        MatchPhase::Other => MatchPhase::PokemonSelection,
+        MatchPhase::PokemonSelection => MatchPhase::Battle,
+        MatchPhase::Battle => MatchPhase::BattleResult,
+        MatchPhase::BattleResult => MatchPhase::Other,
     }
 }
 
@@ -749,6 +897,14 @@ async fn run_command_loop(
                 .await;
             }
             RuntimeCommand::StartRecognition => {}
+            RuntimeCommand::ScanOpponentSelection if has_recognition_worker => {
+                control.request_manual_scan();
+            }
+            RuntimeCommand::ScanOpponentSelection => {}
+            RuntimeCommand::SetMatchPhase(phase) if has_recognition_worker => {
+                control.set_manual_phase(phase);
+            }
+            RuntimeCommand::SetMatchPhase(_) => {}
             RuntimeCommand::SetPreviewEnabled(enabled) => {
                 control.set_preview_enabled(enabled);
             }
@@ -796,6 +952,24 @@ fn send_match_phase_changed(
             phase,
         }
     });
+}
+
+fn match_phase_to_u8(phase: MatchPhase) -> u8 {
+    match phase {
+        MatchPhase::Other => 0,
+        MatchPhase::PokemonSelection => 1,
+        MatchPhase::Battle => 2,
+        MatchPhase::BattleResult => 3,
+    }
+}
+
+fn match_phase_from_u8(raw: u8) -> MatchPhase {
+    match raw {
+        1 => MatchPhase::PokemonSelection,
+        2 => MatchPhase::Battle,
+        3 => MatchPhase::BattleResult,
+        _ => MatchPhase::Other,
+    }
 }
 
 fn map_capture_error(error: &CaptureError) -> champions_interface::RuntimeError {
@@ -1029,9 +1203,38 @@ mod tests {
     }
 
     #[test]
-    fn match_phase_tracker_allows_direct_transition_to_battle_result() {
+    fn match_phase_tracker_rejects_direct_transition_to_battle_result() {
         let mut tracker = MatchPhaseTracker::default();
 
+        assert_eq!(tracker.on_battle_result(true), None);
+        assert_eq!(tracker.phase(), MatchPhase::Other);
+    }
+
+    #[test]
+    fn match_phase_tracker_rejects_direct_transition_from_battle_to_selection() {
+        let mut tracker = MatchPhaseTracker::default();
+
+        tracker.force_phase(MatchPhase::Battle);
+
+        assert_eq!(
+            tracker.on_scheduler_transition(
+                SchedulerState::Idle,
+                SchedulerState::SelectionScreenEntered,
+            ),
+            None
+        );
+        assert_eq!(tracker.phase(), MatchPhase::Battle);
+    }
+
+    #[test]
+    fn match_phase_tracker_force_phase_allows_manual_recovery() {
+        let mut tracker = MatchPhaseTracker::default();
+
+        assert_eq!(
+            tracker.force_phase(MatchPhase::Battle),
+            Some(MatchPhase::Battle)
+        );
+        assert_eq!(tracker.phase(), MatchPhase::Battle);
         assert_eq!(
             tracker.on_battle_result(true),
             Some(MatchPhase::BattleResult)

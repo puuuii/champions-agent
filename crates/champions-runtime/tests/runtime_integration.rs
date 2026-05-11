@@ -212,6 +212,10 @@ async fn battle_result_phase_change_event_is_emitted() {
 
     handle.send(RuntimeCommand::StartCapture).await.unwrap();
     handle.send(RuntimeCommand::StartRecognition).await.unwrap();
+    handle
+        .send(RuntimeCommand::SetMatchPhase(MatchPhase::Battle))
+        .await
+        .unwrap();
 
     assert_capture_status(&mut handle, CaptureStatus::Running).await;
     assert_recognition_running(&mut handle).await;
@@ -233,6 +237,69 @@ async fn battle_result_phase_change_event_is_emitted() {
         assert!(
             tokio::time::Instant::now() < deadline,
             "timed out waiting for battle result phase event"
+        );
+    }
+
+    handle.send(RuntimeCommand::Shutdown).await.unwrap();
+    assert_runtime_stopped(&mut handle).await;
+    worker_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn manual_selection_scan_forces_selection_phase_and_runs_identification() {
+    let source = FakeFrameSource::new(640, 480, 1000);
+    let converter = FakePreviewConverter;
+    let detect_calls = Arc::new(AtomicUsize::new(0));
+    let identify_calls = Arc::new(AtomicUsize::new(0));
+
+    let recognition_port = ProbeRecognitionPort::new(detect_calls, Duration::ZERO, false)
+        .with_identify_calls(identify_calls.clone());
+
+    let (mut handle, workers) = RuntimeBuilder::new()
+        .frame_source(Box::new(source))
+        .preview_converter(Box::new(converter))
+        .recognition_port(Box::new(recognition_port))
+        .build();
+
+    let worker_task = tokio::spawn(async move {
+        workers.run().await;
+    });
+
+    handle.send(RuntimeCommand::StartCapture).await.unwrap();
+    handle.send(RuntimeCommand::StartRecognition).await.unwrap();
+
+    assert_capture_status(&mut handle, CaptureStatus::Running).await;
+    assert_recognition_running(&mut handle).await;
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    handle
+        .send(RuntimeCommand::ScanOpponentSelection)
+        .await
+        .unwrap();
+
+    wait_for_detect_calls(&identify_calls, 1).await;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let mut saw_selection_phase = false;
+    let mut saw_recognized_party = false;
+    while !(saw_selection_phase && saw_recognized_party) {
+        let event = handle.next_event().await.unwrap();
+        if matches!(
+            event,
+            RuntimeEvent::MatchPhaseChanged {
+                phase: MatchPhase::PokemonSelection,
+                ..
+            }
+        ) {
+            saw_selection_phase = true;
+        }
+        if matches!(event, RuntimeEvent::OpponentPartyRecognized { .. }) {
+            saw_recognized_party = true;
+        }
+
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for manual selection scan events"
         );
     }
 
@@ -325,17 +392,26 @@ async fn wait_for_detect_calls(detect_calls: &Arc<AtomicUsize>, minimum_calls: u
 
 struct ProbeRecognitionPort {
     detect_calls: Arc<AtomicUsize>,
+    identify_calls: Arc<AtomicUsize>,
     block_for: Duration,
     battle_result_phase: bool,
+    screen_state: ScreenState,
 }
 
 impl ProbeRecognitionPort {
     fn new(detect_calls: Arc<AtomicUsize>, block_for: Duration, battle_result_phase: bool) -> Self {
         Self {
             detect_calls,
+            identify_calls: Arc::new(AtomicUsize::new(0)),
             block_for,
             battle_result_phase,
+            screen_state: ScreenState::Other,
         }
+    }
+
+    fn with_identify_calls(mut self, identify_calls: Arc<AtomicUsize>) -> Self {
+        self.identify_calls = identify_calls;
+        self
     }
 }
 
@@ -351,7 +427,7 @@ impl RecognitionPort for ProbeRecognitionPort {
 
         Ok(SelectionDetectionResult {
             raw_text: String::new(),
-            screen_state: ScreenState::Other,
+            screen_state: self.screen_state,
         })
     }
 
@@ -363,6 +439,7 @@ impl RecognitionPort for ProbeRecognitionPort {
         &self,
         _images: PartyImageSet,
     ) -> Result<OpponentPartyIdentificationResult, String> {
+        self.identify_calls.fetch_add(1, Ordering::Relaxed);
         Ok(OpponentPartyIdentificationResult {
             recognized_party: RecognizedParty {
                 pokemons: Vec::new(),

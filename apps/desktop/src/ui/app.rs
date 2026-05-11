@@ -109,6 +109,8 @@ pub enum Message {
     OpponentPokemonNameChanged(usize, String),
     OpponentPokemonSuggestionSelected(usize, String),
     TabSelected(Tab),
+    ManualSelectionScanRequested,
+    MatchPhaseSelected(MatchPhase),
     RestorePokemonSelected(usize),
     SaveRestoreDraft(usize),
     DeleteRestoreDraft(usize),
@@ -237,11 +239,16 @@ impl PokeEditorApp {
                         Tab::SelectionSupport => RuntimeCommand::StartRecognition,
                     };
 
-                    return Task::perform(
-                        subscriptions::send_command(command),
-                        Message::RuntimeCommandSent,
-                    );
+                    return Self::send_runtime_command(command);
                 }
+            }
+            Message::ManualSelectionScanRequested => {
+                self.match_phase = MatchPhase::PokemonSelection;
+                return Self::send_runtime_command(RuntimeCommand::ScanOpponentSelection);
+            }
+            Message::MatchPhaseSelected(phase) => {
+                self.match_phase = phase;
+                return Self::send_runtime_command(RuntimeCommand::SetMatchPhase(phase));
             }
             Message::RuntimeCommandSent(result) => {
                 if let Err(error) = result {
@@ -730,6 +737,13 @@ impl PokeEditorApp {
         self.saved_party.saved_pokemons.len()
     }
 
+    fn send_runtime_command(command: RuntimeCommand) -> Task<Message> {
+        Task::perform(
+            subscriptions::send_command(command),
+            Message::RuntimeCommandSent,
+        )
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
         let preview_sub = subscriptions::preview_subscription().map(Message::RuntimeMsg);
         let event_sub = subscriptions::event_subscription().map(Message::RuntimeMsg);
@@ -913,6 +927,17 @@ impl PokeEditorApp {
     }
 
     fn selection_support_view(&self) -> Element<'_, Message> {
+        let phase_button = |phase: MatchPhase, label: &str| {
+            let button = button(text(label).font(JAPANESE_FONT))
+                .on_press(Message::MatchPhaseSelected(phase))
+                .padding([8, 12]);
+            if self.match_phase == phase {
+                button
+            } else {
+                button.style(button::secondary)
+            }
+        };
+
         let refresh_btn = button(
             text(if self.is_refreshing {
                 "更新中..."
@@ -929,6 +954,10 @@ impl PokeEditorApp {
             refresh_btn.on_press(Message::RefreshUsageData)
         };
 
+        let manual_scan_btn = button(text("現在フレームを手動スキャン").font(JAPANESE_FONT))
+            .on_press(Message::ManualSelectionScanRequested)
+            .padding(10);
+
         let header_row = row![
             text("選出サポート").font(JAPANESE_FONT).size(32),
             text(format!(
@@ -937,9 +966,20 @@ impl PokeEditorApp {
             ))
             .font(JAPANESE_FONT)
             .size(18),
-            refresh_btn
+            refresh_btn,
+            manual_scan_btn
         ]
         .spacing(20)
+        .align_y(iced::Alignment::Center);
+
+        let phase_controls = row![
+            text("手動フェーズ").font(JAPANESE_FONT).size(16),
+            phase_button(MatchPhase::Other, "その他"),
+            phase_button(MatchPhase::PokemonSelection, "選出"),
+            phase_button(MatchPhase::Battle, "バトル"),
+            phase_button(MatchPhase::BattleResult, "結果"),
+        ]
+        .spacing(10)
         .align_y(iced::Alignment::Center);
 
         let content: Element<'_, Message> = match &self.opponent_party {
@@ -1164,7 +1204,7 @@ impl PokeEditorApp {
             }
         };
 
-        container(column![header_row, content].spacing(20))
+        container(column![header_row, phase_controls, content].spacing(20))
             .padding(20)
             .width(Length::Fill)
             .height(Length::Fill)
