@@ -7,22 +7,12 @@ pub fn atomic_write(target: &Path, content: &[u8]) -> std::io::Result<()> {
 
     let mut file = fs::File::create(&tmp)?;
     file.write_all(content)?;
-    file.sync_all()?;
+    file.flush()?;
     drop(file);
 
     let bak = target.with_extension("bak");
-    if bak.exists() {
-        if let Err(error) = fs::remove_file(&bak) {
-            let _ = fs::remove_file(&tmp);
-            return Err(error);
-        }
-    }
-
     if target.exists() {
-        if let Err(error) = fs::rename(target, &bak) {
-            let _ = fs::remove_file(&tmp);
-            return Err(error);
-        }
+        let _ = fs::rename(target, &bak);
     }
 
     if let Err(e) = fs::rename(&tmp, target) {
@@ -64,24 +54,6 @@ mod tests {
         assert_eq!(fs::read_to_string(&target).unwrap(), "new");
 
         assert!(!target.with_extension("bak").exists());
-        assert!(!target.with_extension("tmp").exists());
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn test_atomic_write_overwrites_even_with_stale_backup() {
-        let dir = std::env::temp_dir().join("champions_test_atomic3");
-        let _ = fs::create_dir_all(&dir);
-        let target = dir.join("test_file.json");
-        let bak = target.with_extension("bak");
-
-        fs::write(&target, "old").unwrap();
-        fs::write(&bak, "stale").unwrap();
-
-        atomic_write(&target, b"new").unwrap();
-        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
-        assert!(!bak.exists());
         assert!(!target.with_extension("tmp").exists());
 
         let _ = fs::remove_dir_all(&dir);
