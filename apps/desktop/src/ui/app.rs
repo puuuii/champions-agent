@@ -927,7 +927,7 @@ impl PokeEditorApp {
     }
 
     fn selection_support_view(&self) -> Element<'_, Message> {
-        let phase_button = |phase: MatchPhase, label: &str| {
+        let phase_button = |phase: MatchPhase, label: &'static str| {
             let button = button(text(label).font(JAPANESE_FONT))
                 .on_press(Message::MatchPhaseSelected(phase))
                 .padding([8, 12]);
