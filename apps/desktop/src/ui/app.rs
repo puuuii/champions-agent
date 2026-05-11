@@ -54,7 +54,6 @@ impl OpponentPartyState {
 struct OpponentPokemonState {
     slot_index: u8,
     input_name: String,
-    recognized_name: Option<String>,
     usage: Option<PokemonUsageSummaryView>,
     suggestions: Vec<String>,
 }
@@ -71,7 +70,6 @@ impl OpponentPokemonState {
         Self {
             slot_index: pokemon.slot_index,
             input_name,
-            recognized_name: pokemon.display_name,
             usage: pokemon.usage,
             suggestions: Vec::new(),
         }
@@ -1042,10 +1040,6 @@ impl PokeEditorApp {
                     ]
                     .spacing(6);
 
-                    if let Some(hint) = format_opponent_hint(pokemon) {
-                        name_cell = name_cell.push(text(hint).font(JAPANESE_FONT).size(12));
-                    }
-
                     if !pokemon.suggestions.is_empty() {
                         let suggestion_list =
                             column(pokemon.suggestions.iter().map(|suggestion| {
@@ -1318,15 +1312,6 @@ fn selection_support_waiting_message(phase: MatchPhase) -> &'static str {
         MatchPhase::Battle => "バトルフェーズです。相手パーティ情報の表示を待機中です。",
         MatchPhase::BattleResult => "バトル結果フェーズです。",
     }
-}
-
-fn format_opponent_hint(pokemon: &OpponentPokemonState) -> Option<String> {
-    if let Some(recognized) = &pokemon.recognized_name {
-        if recognized != &pokemon.input_name {
-            return Some(format!("認識: {}", recognized));
-        }
-    }
-    None
 }
 
 fn format_conflict_summary(conflicts: &[ConflictView]) -> Option<String> {
