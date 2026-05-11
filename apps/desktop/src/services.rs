@@ -2,11 +2,15 @@ use champions_application::ports::{
     CatalogRepository, PartyRepository, UsageFetcher, UsageRepository, UsageSource,
 };
 use champions_application::use_cases::{
-    GetPokemonUsageQuery, GetPokemonUsageUseCase, LoadPartyUseCase, RefreshUsageDataCommand,
-    RefreshUsageDataUseCase, SavePartyCommand, SavePartyUseCase, SuggestKind, SuggestNamesQuery,
-    SuggestNamesUseCase,
+    BuildSelectionSupportQuery, BuildSelectionSupportResult, BuildSelectionSupportUseCase,
+    GetPokemonUsageQuery, GetPokemonUsageUseCase, LoadPartyUseCase, OpponentSelectionInput,
+    RefreshUsageDataCommand, RefreshUsageDataUseCase, SavePartyCommand, SavePartyUseCase,
+    SuggestKind, SuggestNamesQuery, SuggestNamesUseCase,
 };
-use champions_domain::{party::SavedParty, usage::PokemonUsageSummary};
+use champions_domain::{
+    party::{PokemonBuild, SavedParty},
+    usage::PokemonUsageSummary,
+};
 use champions_interface::{
     AbilityUsageView, EffortValueUsageView, ItemUsageView, MoveUsageView, NatureUsageView,
     PokemonUsageSummaryView,
@@ -107,6 +111,19 @@ impl DesktopAppServices {
                 source: UsageSource::GameWith,
             })
             .map(|result| result.count)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn build_selection_support(
+        &self,
+        my_party: Vec<PokemonBuild>,
+        opponents: Vec<OpponentSelectionInput>,
+    ) -> Result<BuildSelectionSupportResult, String> {
+        BuildSelectionSupportUseCase::new(self.catalog_repo.as_ref(), self.usage_repo.as_ref())
+            .execute(BuildSelectionSupportQuery {
+                my_party,
+                opponents,
+            })
             .map_err(|error| error.to_string())
     }
 }

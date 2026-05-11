@@ -12,7 +12,7 @@ pub enum DamageCalcError {
     MoveNotFound,
 }
 
-fn calc_stat(base: u32, ap: u32, nature_mult: f64, is_hp: bool) -> u32 {
+pub fn resolve_stat_value(base: u32, ap: u32, nature_mult: f64, is_hp: bool) -> u32 {
     if is_hp {
         base + 75 + ap
     } else {
@@ -27,6 +27,95 @@ fn get_rank_mult(stage: i8) -> (u32, u32) {
     } else {
         (2, 2 + s.unsigned_abs() as u32)
     }
+}
+
+fn nature_multiplier(master: &BattleMasterData, nature_id: u32, stat_idx: usize) -> f64 {
+    if let Some(nature) = master.natures.get(&nature_id) {
+        if nature.increased_stat_id == (stat_idx + 1) as u32 {
+            return 1.1;
+        }
+        if nature.decreased_stat_id == (stat_idx + 1) as u32 {
+            return 0.9;
+        }
+    }
+    1.0
+}
+
+pub fn calculate_damage_with_stats(
+    master: &BattleMasterData,
+    attacker_id: u32,
+    defender_id: u32,
+    move_id: u32,
+    attacker_stats: [u32; 6],
+    defender_stats: [u32; 6],
+    attacker_stages: [i8; 8],
+    defender_stages: [i8; 8],
+    is_critical: bool,
+    rng_roll: f64,
+) -> Result<u32, DamageCalcError> {
+    if !master.pokemon_stats.contains_key(&attacker_id) {
+        return Err(DamageCalcError::AttackerNotFound);
+    }
+    if !master.pokemon_stats.contains_key(&defender_id) {
+        return Err(DamageCalcError::DefenderNotFound);
+    }
+    let m = master
+        .moves
+        .get(&move_id)
+        .ok_or(DamageCalcError::MoveNotFound)?;
+
+    if m.damage_class_id == 1 || m.power.unwrap_or(0) == 0 {
+        return Ok(0);
+    }
+    let power = m.power.unwrap();
+
+    let (a_idx, d_idx) = if m.damage_class_id == 2 {
+        (1, 2)
+    } else {
+        (3, 4)
+    };
+
+    let a_val = attacker_stats[a_idx];
+    let d_val = defender_stats[d_idx];
+
+    let a_r = get_rank_mult(attacker_stages[a_idx]);
+    let d_r = get_rank_mult(defender_stages[d_idx]);
+
+    let final_a = if is_critical && attacker_stages[a_idx] < 0 {
+        a_val
+    } else {
+        (a_val * a_r.0) / a_r.1
+    };
+    let final_d = if is_critical && defender_stages[d_idx] > 0 {
+        d_val
+    } else {
+        (d_val * d_r.0) / d_r.1
+    };
+
+    let mut damage = (((22 * power * final_a) / final_d) / 50 + 2) as f64;
+
+    if let Some(atk_types) = master.pokemon_types.get(&attacker_id)
+        && atk_types.contains(&m.type_id)
+    {
+        damage = (damage * 1.5).floor();
+    }
+
+    damage = (damage * rng_roll).floor();
+    if is_critical {
+        damage = (damage * 1.5).floor();
+    }
+
+    if let Some(target_types) = master.pokemon_types.get(&defender_id) {
+        let mut efficacy = 1.0;
+        for &t_id in target_types {
+            if let Some(&factor) = master.type_efficacy.get(&(m.type_id, t_id)) {
+                efficacy *= factor as f64 / 100.0;
+            }
+        }
+        damage = (damage * efficacy).floor();
+    }
+
+    Ok(damage as u32)
 }
 
 pub fn calculate_damage(
@@ -49,70 +138,38 @@ pub fn calculate_damage(
     if m.damage_class_id == 1 || m.power.unwrap_or(0) == 0 {
         return Ok(0);
     }
-    let power = m.power.unwrap();
 
-    let (a_idx, d_idx) = if m.damage_class_id == 2 {
-        (1, 2)
-    } else {
-        (3, 4)
-    };
-
-    let get_nature_mult = |nature_id: u32, stat_idx: usize| -> f64 {
-        if let Some(nature) = master.natures.get(&nature_id) {
-            if nature.increased_stat_id == (stat_idx + 1) as u32 {
-                return 1.1;
-            }
-            if nature.decreased_stat_id == (stat_idx + 1) as u32 {
-                return 0.9;
-            }
-        }
-        1.0
-    };
-
-    let a_nature = get_nature_mult(input.attacker_nature_id, a_idx);
-    let d_nature = get_nature_mult(input.defender_nature_id, d_idx);
-
-    let a_val = calc_stat(atk_base[a_idx], input.attacker_ap[a_idx], a_nature, false);
-    let d_val = calc_stat(def_base[d_idx], input.defender_ap[d_idx], d_nature, false);
-
-    let a_r = get_rank_mult(input.attacker_stages[a_idx]);
-    let d_r = get_rank_mult(input.defender_stages[d_idx]);
-
-    let final_a = if input.is_critical && input.attacker_stages[a_idx] < 0 {
-        a_val
-    } else {
-        (a_val * a_r.0) / a_r.1
-    };
-    let final_d = if input.is_critical && input.defender_stages[d_idx] > 0 {
-        d_val
-    } else {
-        (d_val * d_r.0) / d_r.1
-    };
-
-    let mut damage = (((22 * power * final_a) / final_d) / 50 + 2) as f64;
-
-    if let Some(atk_types) = master.pokemon_types.get(&input.attacker_id)
-        && atk_types.contains(&m.type_id)
-    {
-        damage = (damage * 1.5).floor();
+    let mut attacker_stats = [0; 6];
+    let mut defender_stats = [0; 6];
+    for stat_idx in 0..6 {
+        let attacker_nature = nature_multiplier(master, input.attacker_nature_id, stat_idx);
+        let defender_nature = nature_multiplier(master, input.defender_nature_id, stat_idx);
+        attacker_stats[stat_idx] = resolve_stat_value(
+            atk_base[stat_idx],
+            input.attacker_ap[stat_idx],
+            attacker_nature,
+            stat_idx == 0,
+        );
+        defender_stats[stat_idx] = resolve_stat_value(
+            def_base[stat_idx],
+            input.defender_ap[stat_idx],
+            defender_nature,
+            stat_idx == 0,
+        );
     }
 
-    damage = (damage * input.rng_roll).floor();
-    if input.is_critical {
-        damage = (damage * 1.5).floor();
-    }
-
-    if let Some(target_types) = master.pokemon_types.get(&input.defender_id) {
-        let mut efficacy = 1.0;
-        for &t_id in target_types {
-            if let Some(&factor) = master.type_efficacy.get(&(m.type_id, t_id)) {
-                efficacy *= factor as f64 / 100.0;
-            }
-        }
-        damage = (damage * efficacy).floor();
-    }
-
-    Ok(damage as u32)
+    calculate_damage_with_stats(
+        master,
+        input.attacker_id,
+        input.defender_id,
+        input.move_id,
+        attacker_stats,
+        defender_stats,
+        input.attacker_stages,
+        input.defender_stages,
+        input.is_critical,
+        input.rng_roll,
+    )
 }
 
 #[cfg(test)]
@@ -312,6 +369,33 @@ mod tests {
         input.attacker_nature_id = 2;
         // A=(130+20)*1.1=165, base=(22*80*165)/140/50+2=43, STAB=floor(43*1.5)=64, eff=128
         assert_eq!(calculate_damage(&master, &input).unwrap(), 128);
+    }
+
+    #[test]
+    fn calculate_damage_with_stats_matches_resolved_input() {
+        let master = fixture_master();
+        let input = default_input(1, 2, 10);
+
+        let damage = calculate_damage(&master, &input).unwrap();
+        let attacker_stats = [175, 150, 100, 80, 90, 130];
+        let defender_stats = [175, 100, 140, 80, 100, 80];
+
+        assert_eq!(
+            calculate_damage_with_stats(
+                &master,
+                1,
+                2,
+                10,
+                attacker_stats,
+                defender_stats,
+                [0; 8],
+                [0; 8],
+                false,
+                1.0
+            )
+            .unwrap(),
+            damage
+        );
     }
 
     #[test]

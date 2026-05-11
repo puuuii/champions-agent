@@ -8,10 +8,19 @@ use std::path::{Path, PathBuf};
 pub struct CsvCatalogRepository {
     master_data_dir: PathBuf,
     species_names: Vec<String>,
+    species_name_to_id: HashMap<String, u32>,
     move_names: Vec<String>,
+    move_name_to_id: HashMap<String, u32>,
     item_names: Vec<String>,
     nature_names: Vec<String>,
+    nature_name_to_id: HashMap<String, u32>,
     ability_names: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct NameIndex {
+    names: Vec<String>,
+    ids: HashMap<String, u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,47 +67,59 @@ impl CsvCatalogRepository {
         master_data_dir: &Path,
         usage_json_path: Option<&Path>,
     ) -> Result<Self, CatalogError> {
-        let species_names = Self::load_species_names(master_data_dir, usage_json_path)?;
-        let move_names = Self::load_names_csv(&master_data_dir.join("move_names.csv"))?;
-        let nature_names = Self::load_names_csv(&master_data_dir.join("nature_names.csv"))?;
+        let species_index = Self::load_species_index(master_data_dir, usage_json_path)?;
+        let move_index = Self::load_name_index_csv(&master_data_dir.join("move_names.csv"))?;
+        let nature_index = Self::load_name_index_csv(&master_data_dir.join("nature_names.csv"))?;
         let item_names = Self::load_names_csv(&master_data_dir.join("item_names.csv"))?;
         let ability_names =
             Self::load_names_csv_optional(&master_data_dir.join("ability_names.csv"));
 
         Ok(Self {
             master_data_dir: master_data_dir.to_path_buf(),
-            species_names,
-            move_names,
+            species_names: species_index.names,
+            species_name_to_id: species_index.ids,
+            move_names: move_index.names,
+            move_name_to_id: move_index.ids,
             item_names,
-            nature_names,
+            nature_names: nature_index.names,
+            nature_name_to_id: nature_index.ids,
             ability_names,
         })
     }
 
-    fn load_species_names(
+    fn load_species_index(
         master_data_dir: &Path,
         usage_json_path: Option<&Path>,
-    ) -> Result<Vec<String>, CatalogError> {
+    ) -> Result<NameIndex, CatalogError> {
+        let mut index =
+            Self::load_name_index_csv_optional(&master_data_dir.join("pokemon_names.csv"))?;
         let default_path = master_data_dir.join("usage.json");
         let path = usage_json_path.unwrap_or(&default_path);
         if !path.exists() {
-            return Ok(Vec::new());
+            index.names.sort();
+            index.names.dedup();
+            return Ok(index);
         }
         let data = std::fs::read_to_string(path)
             .map_err(|e| CatalogError::LoadFailed(format!("usage.json: {e}")))?;
         let json: serde_json::Value = serde_json::from_str(&data)
             .map_err(|e| CatalogError::LoadFailed(format!("usage.json parse: {e}")))?;
-        let mut names: Vec<String> = json
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|p| p["name"].as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        names.sort();
-        names.dedup();
-        Ok(names)
+        if let Some(arr) = json.as_array() {
+            for pokemon in arr {
+                let Some(name) = pokemon["name"].as_str().map(str::to_string) else {
+                    continue;
+                };
+                if !index.ids.contains_key(&name)
+                    && let Some(id) = pokemon["id"].as_str().and_then(|value| value.parse().ok())
+                {
+                    index.ids.insert(name.clone(), id);
+                }
+                index.names.push(name);
+            }
+        }
+        index.names.sort();
+        index.names.dedup();
+        Ok(index)
     }
 
     fn load_names_csv(path: &Path) -> Result<Vec<String>, CatalogError> {
@@ -138,6 +159,67 @@ impl CsvCatalogRepository {
 
     fn load_names_csv_optional(path: &Path) -> Vec<String> {
         Self::load_names_csv(path).unwrap_or_default()
+    }
+
+    fn load_name_index_csv(path: &Path) -> Result<NameIndex, CatalogError> {
+        if !path.exists() {
+            return Err(CatalogError::NotFound(path.display().to_string()));
+        }
+        let file = std::fs::File::open(path)
+            .map_err(|e| CatalogError::LoadFailed(format!("{}: {e}", path.display())))?;
+        let mut rdr = csv::Reader::from_reader(file);
+        let headers = rdr
+            .headers()
+            .map_err(|e| CatalogError::LoadFailed(format!("headers: {e}")))?
+            .clone();
+
+        let name_idx = headers
+            .iter()
+            .position(|h| h == "name")
+            .ok_or_else(|| CatalogError::LoadFailed("name column not found".into()))?;
+        let lang_idx = headers
+            .iter()
+            .position(|h| h == "local_language_id")
+            .ok_or_else(|| CatalogError::LoadFailed("local_language_id column not found".into()))?;
+        let id_idx = headers
+            .iter()
+            .position(|header| {
+                header != "local_language_id" && (header == "id" || header.ends_with("_id"))
+            })
+            .ok_or_else(|| CatalogError::LoadFailed("id column not found".into()))?;
+
+        let mut names = Vec::new();
+        let mut ids = HashMap::new();
+        for result in rdr.records() {
+            let record = result.map_err(|e| CatalogError::LoadFailed(e.to_string()))?;
+            if record.get(lang_idx) != Some("1") {
+                continue;
+            }
+
+            let Some(name) = record.get(name_idx).map(str::to_string) else {
+                continue;
+            };
+            let Some(id) = record
+                .get(id_idx)
+                .and_then(|value| value.parse::<u32>().ok())
+            else {
+                continue;
+            };
+
+            names.push(name.clone());
+            ids.entry(name).or_insert(id);
+        }
+        names.sort();
+        names.dedup();
+        Ok(NameIndex { names, ids })
+    }
+
+    fn load_name_index_csv_optional(path: &Path) -> Result<NameIndex, CatalogError> {
+        if path.exists() {
+            Self::load_name_index_csv(path)
+        } else {
+            Ok(NameIndex::default())
+        }
     }
 
     fn partial_match(names: &[String], query: &str, limit: usize) -> Vec<String> {
@@ -198,6 +280,18 @@ impl CatalogRepository for CsvCatalogRepository {
 
     fn suggest_abilities(&self, query: &str, limit: usize) -> Result<Vec<String>, CatalogError> {
         Ok(Self::partial_match(&self.ability_names, query, limit))
+    }
+
+    fn find_species_id_by_name(&self, name: &str) -> Result<Option<u32>, CatalogError> {
+        Ok(self.species_name_to_id.get(name.trim()).copied())
+    }
+
+    fn find_move_id_by_name(&self, name: &str) -> Result<Option<u32>, CatalogError> {
+        Ok(self.move_name_to_id.get(name.trim()).copied())
+    }
+
+    fn find_nature_id_by_name(&self, name: &str) -> Result<Option<u32>, CatalogError> {
+        Ok(self.nature_name_to_id.get(name.trim()).copied())
     }
 
     fn load_battle_master_data(&self) -> Result<BattleMasterData, CatalogError> {
@@ -366,9 +460,12 @@ mod tests {
         let repo = CsvCatalogRepository {
             master_data_dir: PathBuf::new(),
             species_names: vec!["ピカチュウ".to_string(), "ライチュウ".to_string()],
+            species_name_to_id: HashMap::new(),
             move_names: vec!["10まんボルト".to_string(), "アイアンヘッド".to_string()],
+            move_name_to_id: HashMap::new(),
             item_names: vec!["いのちのたま".to_string(), "とつげきチョッキ".to_string()],
             nature_names: vec!["ひかえめ".to_string(), "おくびょう".to_string()],
+            nature_name_to_id: HashMap::new(),
             ability_names: vec!["せいでんき".to_string(), "マルチスケイル".to_string()],
         };
 

@@ -3,9 +3,9 @@ use champions_application::ports::*;
 use champions_application::use_cases::*;
 use champions_domain::battle::DamageInput;
 use champions_domain::catalog::{BattleMasterData, MoveData, NatureData};
-use champions_domain::party::{PokemonBuild, SavedParty};
+use champions_domain::party::{EffortValueSpread, MoveSet, PokemonBuild, SavedParty};
 use champions_domain::recognition::ScreenState;
-use champions_domain::usage::{MoveUsage, PokemonUsageSummary};
+use champions_domain::usage::{EffortValueUsage, MoveUsage, NatureUsage, PokemonUsageSummary};
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -40,20 +40,35 @@ impl PartyRepository for FakePartyRepository {
 
 struct FakeCatalogRepository {
     species: Vec<String>,
+    species_ids: HashMap<String, u32>,
     moves: Vec<String>,
+    move_ids: HashMap<String, u32>,
     items: Vec<String>,
     natures: Vec<String>,
+    nature_ids: HashMap<String, u32>,
     abilities: Vec<String>,
     master_data: BattleMasterData,
 }
 
 impl FakeCatalogRepository {
     fn with_species(names: Vec<&str>) -> Self {
+        let species: Vec<String> = names.into_iter().map(|s| s.to_string()).collect();
+        let species_ids = species
+            .iter()
+            .enumerate()
+            .map(|(index, name)| (name.clone(), index as u32 + 1))
+            .collect();
         Self {
-            species: names.into_iter().map(|s| s.to_string()).collect(),
+            species,
+            species_ids,
             moves: vec!["10まんボルト".to_string(), "かみなり".to_string()],
+            move_ids: HashMap::from([
+                ("10まんボルト".to_string(), 10),
+                ("かみなり".to_string(), 20),
+            ]),
             items: vec!["こだわりメガネ".to_string()],
             natures: vec!["ひかえめ".to_string()],
+            nature_ids: HashMap::from([("ひかえめ".to_string(), 1)]),
             abilities: vec!["せいでんき".to_string()],
             master_data: fixture_master_data(),
         }
@@ -120,6 +135,18 @@ impl CatalogRepository for FakeCatalogRepository {
 
     fn suggest_abilities(&self, query: &str, limit: usize) -> Result<Vec<String>, CatalogError> {
         Ok(Self::suggest_names(&self.abilities, query, limit))
+    }
+
+    fn find_species_id_by_name(&self, name: &str) -> Result<Option<u32>, CatalogError> {
+        Ok(self.species_ids.get(name.trim()).copied())
+    }
+
+    fn find_move_id_by_name(&self, name: &str) -> Result<Option<u32>, CatalogError> {
+        Ok(self.move_ids.get(name.trim()).copied())
+    }
+
+    fn find_nature_id_by_name(&self, name: &str) -> Result<Option<u32>, CatalogError> {
+        Ok(self.nature_ids.get(name.trim()).copied())
     }
 
     fn load_battle_master_data(&self) -> Result<BattleMasterData, CatalogError> {
@@ -596,4 +623,107 @@ fn detect_battle_result_phase_rejects_other_text() {
         .unwrap();
 
     assert!(!result);
+}
+
+#[test]
+fn build_selection_support_calculates_speed_and_two_hit_ko() {
+    let catalog = FakeCatalogRepository::with_species(vec!["アタッカー", "タンク"]);
+    let repo = FakeUsageRepository::new(vec![PokemonUsageSummary {
+        id: "2".to_string(),
+        name: "タンク".to_string(),
+        types: vec!["じめん".to_string()],
+        moves: vec![MoveUsage {
+            name: "10まんボルト".to_string(),
+            rate: "100%".to_string(),
+        }],
+        items: vec![],
+        abilities: vec![],
+        effort_values: vec![EffortValueUsage {
+            h: 0,
+            a: 0,
+            b: 0,
+            c: 0,
+            d: 0,
+            s: 0,
+            rate: "100%".to_string(),
+        }],
+        natures: vec![NatureUsage {
+            name: "ひかえめ".to_string(),
+            rate: "100%".to_string(),
+        }],
+    }]);
+    let uc = BuildSelectionSupportUseCase::new(&catalog, &repo);
+
+    let result = uc
+        .execute(BuildSelectionSupportQuery {
+            my_party: vec![PokemonBuild {
+                species_name: "アタッカー".to_string(),
+                effort_values: EffortValueSpread {
+                    h: 175,
+                    a: 150,
+                    b: 100,
+                    c: 80,
+                    d: 90,
+                    s: 130,
+                },
+                moves: MoveSet {
+                    moves: [
+                        "10まんボルト".to_string(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                    ],
+                },
+                ..Default::default()
+            }],
+            opponents: vec![OpponentSelectionInput {
+                slot_index: 0,
+                name: "タンク".to_string(),
+            }],
+        })
+        .unwrap();
+
+    assert_eq!(result.opponents.len(), 1);
+    let opponent = &result.opponents[0];
+    let assumption = opponent.assumption.as_ref().unwrap();
+    assert_eq!(assumption.stats, [175, 100, 140, 80, 100, 80]);
+
+    let matchup = &opponent.matchups[0];
+    let speed = matchup.speed.as_ref().unwrap();
+    assert_eq!(speed.my_first_chance_percent, 100.0);
+    assert_eq!(speed.opponent_first_chance_percent, 0.0);
+
+    let my_attack = matchup.my_attack.as_ref().unwrap();
+    assert_eq!(my_attack.move_name, "10まんボルト");
+    assert_eq!(my_attack.guaranteed_hits, Some(2));
+    match &my_attack.ko_summary {
+        KoSummary::TwoHit { chance_percent } => assert_eq!(*chance_percent, 100.0),
+        _ => panic!("expected two-hit ko summary"),
+    }
+
+    assert!(matchup.opponent_attack.is_some());
+}
+
+#[test]
+fn build_selection_support_reports_missing_usage() {
+    let catalog = FakeCatalogRepository::with_species(vec!["アタッカー", "タンク"]);
+    let repo = FakeUsageRepository::empty();
+    let uc = BuildSelectionSupportUseCase::new(&catalog, &repo);
+
+    let result = uc
+        .execute(BuildSelectionSupportQuery {
+            my_party: vec![sample_pokemon("アタッカー")],
+            opponents: vec![OpponentSelectionInput {
+                slot_index: 1,
+                name: "タンク".to_string(),
+            }],
+        })
+        .unwrap();
+
+    assert_eq!(result.opponents.len(), 1);
+    assert!(result.opponents[0].assumption.is_none());
+    assert_eq!(
+        result.opponents[0].note.as_deref(),
+        Some("使用率データがないため相性を計算できません")
+    );
 }

@@ -1,3 +1,4 @@
+mod build_selection_support;
 mod calculate_damage;
 mod detect_battle_result_phase;
 mod detect_selection_screen;
@@ -8,6 +9,11 @@ mod refresh_usage_data;
 mod save_party;
 mod suggest_names;
 
+pub use build_selection_support::{
+    AttackSupport, BuildSelectionSupportError, BuildSelectionSupportQuery,
+    BuildSelectionSupportResult, BuildSelectionSupportUseCase, KoSummary, OpponentAssumption,
+    OpponentSelectionInput, OpponentSelectionSupport, PokemonMatchupSupport, SpeedComparison,
+};
 pub use calculate_damage::{
     CalculateDamageCommand, CalculateDamageError, CalculateDamageResult, CalculateDamageUseCase,
 };

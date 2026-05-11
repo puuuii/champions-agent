@@ -4,7 +4,11 @@ use super::pokemon::{
 };
 use super::subscriptions::{self, RuntimeMessage};
 use crate::services::{DesktopAppServices, SuggestionKind};
-use champions_domain::party::SavedParty;
+use champions_application::use_cases::{
+    AttackSupport, BuildSelectionSupportResult, KoSummary, OpponentAssumption,
+    OpponentSelectionInput, OpponentSelectionSupport, PokemonMatchupSupport, SpeedComparison,
+};
+use champions_domain::party::{PokemonBuild, SavedParty};
 use champions_interface::{
     ConflictView, MatchPhase, OpponentPartyView, PokemonUsageSummaryView, RecognizedPokemonView,
     RuntimeCommand, RuntimeEvent,
@@ -98,6 +102,8 @@ pub struct PokeEditorApp {
     is_refreshing: bool,
     match_phase: MatchPhase,
     editor_status: Option<String>,
+    selection_support: Option<BuildSelectionSupportResult>,
+    selection_support_status: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -154,8 +160,8 @@ impl PokeEditorApp {
 
         let (main_id, main_task) = window::open(window::Settings {
             size: Size {
-                width: 1200.0,
-                height: 800.0,
+                width: 1280.0,
+                height: 960.0,
             },
             ..Default::default()
         });
@@ -183,6 +189,8 @@ impl PokeEditorApp {
                 is_refreshing: false,
                 match_phase: MatchPhase::Other,
                 editor_status,
+                selection_support: None,
+                selection_support_status: None,
             },
             Task::batch([main_task.discard(), preview_task.discard()]),
         )
@@ -229,6 +237,10 @@ impl PokeEditorApp {
             Message::TabSelected(tab) => {
                 let previous_tab = self.active_tab;
                 self.active_tab = tab;
+
+                if tab == Tab::BattleSupport {
+                    self.refresh_selection_support();
+                }
 
                 if previous_tab != tab {
                     self.match_phase = MatchPhase::Other;
@@ -320,6 +332,7 @@ impl PokeEditorApp {
                 match result {
                     Ok(count) => {
                         self.refresh_opponent_usage();
+                        self.refresh_selection_support();
                         println!("使用率データを {} 件更新しました", count);
                     }
                     Err(e) => eprintln!("使用率データの更新に失敗しました: {}", e),
@@ -468,6 +481,7 @@ impl PokeEditorApp {
             RuntimeEvent::OpponentPartyRecognized { party, .. } => {
                 self.opponent_party = Some(OpponentPartyState::from_view(party));
                 self.active_tab = Tab::BattleSupport;
+                self.refresh_selection_support();
             }
             RuntimeEvent::MatchPhaseChanged { phase, .. } => {
                 self.match_phase = phase;
@@ -691,6 +705,8 @@ impl PokeEditorApp {
                 pokemon.usage = usage;
             }
         }
+
+        self.refresh_selection_support();
     }
 
     fn handle_opponent_pokemon_selection(&mut self, index: usize, name: String) {
@@ -703,6 +719,8 @@ impl PokeEditorApp {
                 pokemon.usage = usage;
             }
         }
+
+        self.refresh_selection_support();
     }
 
     fn suggest_species_names(&self, query: &str) -> Vec<String> {
@@ -727,6 +745,41 @@ impl PokeEditorApp {
         if let Some(party) = self.opponent_party.as_mut() {
             for (pokemon, usage) in party.pokemons.iter_mut().zip(usage_updates) {
                 pokemon.usage = usage;
+            }
+        }
+    }
+
+    fn current_party_builds(&self) -> Vec<PokemonBuild> {
+        self.pokemons.iter().map(PokemonState::to_build).collect()
+    }
+
+    fn refresh_selection_support(&mut self) {
+        let Some(opponent_party) = self.opponent_party.as_ref() else {
+            self.selection_support = None;
+            self.selection_support_status = None;
+            return;
+        };
+
+        let opponents = opponent_party
+            .pokemons
+            .iter()
+            .map(|pokemon| OpponentSelectionInput {
+                slot_index: pokemon.slot_index,
+                name: pokemon.input_name.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        match self
+            .services
+            .build_selection_support(self.current_party_builds(), opponents)
+        {
+            Ok(result) => {
+                self.selection_support = Some(result);
+                self.selection_support_status = None;
+            }
+            Err(error) => {
+                self.selection_support = None;
+                self.selection_support_status = Some(format!("相性計算に失敗しました: {error}"));
             }
         }
     }
@@ -1194,6 +1247,36 @@ impl PokeEditorApp {
                 .spacing(20);
                 content = content.push(table);
 
+                content = content.push(text("相性一覧").font(JAPANESE_FONT).size(24));
+
+                if let Some(status) = &self.selection_support_status {
+                    content = content.push(
+                        container(text(status).font(JAPANESE_FONT).size(14))
+                            .padding(10)
+                            .width(Length::Fill),
+                    );
+                }
+
+                if let Some(selection_support) = &self.selection_support {
+                    if selection_support.opponents.is_empty() {
+                        content = content.push(
+                            text("相性を計算できる相手ポケモンがまだありません。")
+                                .font(JAPANESE_FONT)
+                                .size(14),
+                        );
+                    } else {
+                        for opponent in &selection_support.opponents {
+                            content = content.push(selection_support_card(opponent));
+                        }
+                    }
+                } else if self.selection_support_status.is_none() {
+                    content = content.push(
+                        text("相性を表示するには、相手ポケモン名が確定した状態で使用率データが必要です。")
+                            .font(JAPANESE_FONT)
+                            .size(14),
+                    );
+                }
+
                 scrollable(content).into()
             }
         };
@@ -1334,4 +1417,175 @@ fn format_conflict_summary(conflicts: &[ConflictView]) -> Option<String> {
         .join(" / ");
 
     Some(format!("重複候補があります: {body}"))
+}
+
+fn selection_support_card<'a>(opponent: &'a OpponentSelectionSupport) -> Element<'a, Message> {
+    let header = text(format!(
+        "#{} {}",
+        opponent.slot_index + 1,
+        opponent.opponent_name
+    ))
+    .font(JAPANESE_FONT)
+    .size(22);
+
+    let mut content = column![header].spacing(10);
+    if let Some(assumption) = &opponent.assumption {
+        content = content.push(
+            text(format_opponent_assumption(assumption))
+                .font(JAPANESE_FONT)
+                .size(13),
+        );
+    }
+
+    if let Some(note) = &opponent.note {
+        content = content.push(text(note).font(JAPANESE_FONT).size(13));
+    }
+
+    if opponent.matchups.is_empty() {
+        content = content.push(
+            text("比較できる自パーティ情報がまだありません。")
+                .font(JAPANESE_FONT)
+                .size(13),
+        );
+    } else {
+        content = content.push(
+            column(
+                opponent
+                    .matchups
+                    .iter()
+                    .map(|matchup| selection_support_matchup_row(matchup)),
+            )
+            .spacing(10),
+        );
+    }
+
+    container(content)
+        .padding(16)
+        .width(Length::Fill)
+        .style(|_| container::Style {
+            border: Border {
+                color: Color::from_rgb(0.78, 0.78, 0.82),
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+fn selection_support_matchup_row<'a>(matchup: &'a PokemonMatchupSupport) -> Element<'a, Message> {
+    let body = column![
+        text(format!(
+            "#{} {}",
+            matchup.my_slot_index + 1,
+            matchup.my_name
+        ))
+        .font(JAPANESE_FONT)
+        .size(18),
+        text(format_speed_summary(matchup.speed.as_ref()))
+            .font(JAPANESE_FONT)
+            .size(13),
+        text(format_attack_summary("攻撃", matchup.my_attack.as_ref()))
+            .font(JAPANESE_FONT)
+            .size(13),
+        text(format_attack_summary(
+            "被弾",
+            matchup.opponent_attack.as_ref()
+        ))
+        .font(JAPANESE_FONT)
+        .size(13),
+    ]
+    .spacing(4);
+
+    container(body)
+        .padding(12)
+        .width(Length::Fill)
+        .style(|_| container::Style {
+            border: Border {
+                color: Color::from_rgb(0.86, 0.86, 0.9),
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+fn format_opponent_assumption(assumption: &OpponentAssumption) -> String {
+    let nature = assumption.nature_name.as_deref().unwrap_or("不明");
+    format!(
+        "想定: 性格 {nature} / EV {} / 実数 {}",
+        format_effort_value_spread(&assumption.effort_values),
+        format_actual_stats(&assumption.stats),
+    )
+}
+
+fn format_effort_value_spread(values: &champions_domain::party::EffortValueSpread) -> String {
+    format!(
+        "H{} A{} B{} C{} D{} S{}",
+        values.h, values.a, values.b, values.c, values.d, values.s
+    )
+}
+
+fn format_actual_stats(stats: &[u32; 6]) -> String {
+    format!(
+        "H{} A{} B{} C{} D{} S{}",
+        stats[0], stats[1], stats[2], stats[3], stats[4], stats[5]
+    )
+}
+
+fn format_speed_summary(speed: Option<&SpeedComparison>) -> String {
+    match speed {
+        Some(speed) => format!(
+            "先手率: 自{} / 相{} (S {} vs {})",
+            format_percent(speed.my_first_chance_percent),
+            format_percent(speed.opponent_first_chance_percent),
+            speed.my_speed,
+            speed.opponent_speed,
+        ),
+        None => "先手率: 計算不可".to_string(),
+    }
+}
+
+fn format_attack_summary(label: &str, attack: Option<&AttackSupport>) -> String {
+    match attack {
+        Some(attack) if attack.max_damage == 0 => {
+            format!("{label}: {} / 有効打なし", attack.move_name)
+        }
+        Some(attack) => {
+            let guaranteed = attack
+                .guaranteed_hits
+                .map(|hits| format!(" / 確{hits}発"))
+                .unwrap_or_default();
+            format!(
+                "{label}: {} / {}{} / {}-{}",
+                attack.move_name,
+                format_ko_summary(&attack.ko_summary),
+                guaranteed,
+                attack.min_damage,
+                attack.max_damage,
+            )
+        }
+        None => format!("{label}: 計算不可"),
+    }
+}
+
+fn format_ko_summary(summary: &KoSummary) -> String {
+    match summary {
+        KoSummary::OneHit { chance_percent } => {
+            format!("1発 {}", format_percent(*chance_percent))
+        }
+        KoSummary::TwoHit { chance_percent } => {
+            format!("2発 {}", format_percent(*chance_percent))
+        }
+        KoSummary::MoreThanTwo => "2発圏外".to_string(),
+    }
+}
+
+fn format_percent(value: f32) -> String {
+    if (value - value.round()).abs() < 0.05 {
+        format!("{value:.0}%")
+    } else {
+        format!("{value:.1}%")
+    }
 }
