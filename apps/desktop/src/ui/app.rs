@@ -28,7 +28,7 @@ const EDITOR_SLOT_ORDER: [usize; 6] = [0, 1, 2, 3, 4, 5];
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Editor,
-    SelectionSupport,
+    BattleSupport,
 }
 
 #[derive(Debug, Clone)]
@@ -234,7 +234,7 @@ impl PokeEditorApp {
                     self.match_phase = MatchPhase::Other;
                     let command = match tab {
                         Tab::Editor => RuntimeCommand::StopRecognition,
-                        Tab::SelectionSupport => RuntimeCommand::StartRecognition,
+                        Tab::BattleSupport => RuntimeCommand::StartRecognition,
                     };
 
                     return Self::send_runtime_command(command);
@@ -467,7 +467,7 @@ impl PokeEditorApp {
         match event {
             RuntimeEvent::OpponentPartyRecognized { party, .. } => {
                 self.opponent_party = Some(OpponentPartyState::from_view(party));
-                self.active_tab = Tab::SelectionSupport;
+                self.active_tab = Tab::BattleSupport;
             }
             RuntimeEvent::MatchPhaseChanged { phase, .. } => {
                 self.match_phase = phase;
@@ -774,15 +774,15 @@ impl PokeEditorApp {
             button(text("パーティ編集").font(JAPANESE_FONT))
                 .on_press(Message::TabSelected(Tab::Editor))
                 .padding(10),
-            button(text("選出サポート").font(JAPANESE_FONT))
-                .on_press(Message::TabSelected(Tab::SelectionSupport))
+            button(text("対戦サポート").font(JAPANESE_FONT))
+                .on_press(Message::TabSelected(Tab::BattleSupport))
                 .padding(10),
         ]
         .spacing(10);
 
         let content = match self.active_tab {
             Tab::Editor => self.editor_view(),
-            Tab::SelectionSupport => self.selection_support_view(),
+            Tab::BattleSupport => self.battle_support_view(),
         };
 
         container(column![tab_bar, content].spacing(20).padding(20))
@@ -924,7 +924,7 @@ impl PokeEditorApp {
         scrollable(content.push(grid)).into()
     }
 
-    fn selection_support_view(&self) -> Element<'_, Message> {
+    fn battle_support_view(&self) -> Element<'_, Message> {
         let phase_button = |phase: MatchPhase, label: &'static str| {
             let button = button(text(label).font(JAPANESE_FONT))
                 .on_press(Message::MatchPhaseSelected(phase))
@@ -957,10 +957,10 @@ impl PokeEditorApp {
             .padding(10);
 
         let header_row = row![
-            text("選出サポート").font(JAPANESE_FONT).size(32),
+            text("対戦サポート").font(JAPANESE_FONT).size(32),
             text(format!(
                 "現在: {}",
-                selection_support_phase_label(self.match_phase)
+                battle_support_phase_label(self.match_phase)
             ))
             .font(JAPANESE_FONT)
             .size(18),
@@ -981,7 +981,7 @@ impl PokeEditorApp {
         .align_y(iced::Alignment::Center);
 
         let content: Element<'_, Message> = match &self.opponent_party {
-            None => text(selection_support_waiting_message(self.match_phase))
+            None => text(battle_support_waiting_message(self.match_phase))
                 .size(20)
                 .font(JAPANESE_FONT)
                 .into(),
@@ -1294,7 +1294,7 @@ fn find_focused_input() -> impl advanced_widget::Operation<Option<WidgetId>> {
     FindFocusedInput { focused: None }
 }
 
-fn selection_support_phase_label(phase: MatchPhase) -> &'static str {
+fn battle_support_phase_label(phase: MatchPhase) -> &'static str {
     match phase {
         MatchPhase::Other => "その他フェーズ",
         MatchPhase::PokemonSelection => "ポケモン選択フェーズ",
@@ -1303,7 +1303,7 @@ fn selection_support_phase_label(phase: MatchPhase) -> &'static str {
     }
 }
 
-fn selection_support_waiting_message(phase: MatchPhase) -> &'static str {
+fn battle_support_waiting_message(phase: MatchPhase) -> &'static str {
     match phase {
         MatchPhase::Other => "ポケモン選択フェーズを待機中...",
         MatchPhase::PokemonSelection => {
