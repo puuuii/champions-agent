@@ -727,3 +727,49 @@ fn build_selection_support_reports_missing_usage() {
         Some("使用率データがないため相性を計算できません")
     );
 }
+
+#[test]
+fn build_selection_support_applies_nature_without_catalog_nature_id() {
+    let mut catalog = FakeCatalogRepository::with_species(vec!["アタッカー", "タンク"]);
+    catalog.nature_ids.clear();
+    let repo = FakeUsageRepository::new(vec![PokemonUsageSummary {
+        id: "2".to_string(),
+        name: "タンク".to_string(),
+        types: vec!["じめん".to_string()],
+        moves: vec![MoveUsage {
+            name: "10まんボルト".to_string(),
+            rate: "100%".to_string(),
+        }],
+        items: vec![],
+        abilities: vec![],
+        effort_values: vec![EffortValueUsage {
+            h: 0,
+            a: 0,
+            b: 0,
+            c: 0,
+            d: 0,
+            s: 0,
+            rate: "100%".to_string(),
+        }],
+        natures: vec![NatureUsage {
+            name: "おくびょう".to_string(),
+            rate: "100%".to_string(),
+        }],
+    }]);
+    let uc = BuildSelectionSupportUseCase::new(&catalog, &repo);
+
+    let result = uc
+        .execute(BuildSelectionSupportQuery {
+            my_party: vec![sample_pokemon("アタッカー")],
+            opponents: vec![OpponentSelectionInput {
+                slot_index: 0,
+                name: "タンク".to_string(),
+            }],
+        })
+        .unwrap();
+
+    let assumption = result.opponents[0].assumption.as_ref().unwrap();
+    assert_eq!(assumption.nature_name.as_deref(), Some("おくびょう"));
+    assert_eq!(assumption.stats[5], 88);
+    assert_eq!(assumption.stats[1], 90);
+}

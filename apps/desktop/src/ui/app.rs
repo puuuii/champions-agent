@@ -1514,7 +1514,7 @@ fn selection_support_matchup_row<'a>(matchup: &'a PokemonMatchupSupport) -> Elem
 fn format_opponent_assumption(assumption: &OpponentAssumption) -> String {
     let nature = assumption.nature_name.as_deref().unwrap_or("不明");
     format!(
-        "想定: 性格 {nature} / EV {} / 実数 {}",
+        "想定能力値(最頻EV/性格反映): 性格 {nature} / EV {} / 実数 {}",
         format_effort_value_spread(&assumption.effort_values),
         format_actual_stats(&assumption.stats),
     )

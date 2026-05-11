@@ -161,21 +161,18 @@ impl<'a> BuildSelectionSupportUseCase<'a> {
 
             let assumed_evs = top_effort_values(usage);
             let assumed_nature_name = top_nature_name(usage);
-            let assumed_nature_id = match assumed_nature_name.as_deref() {
-                Some(name) => self.catalog_repo.find_nature_id_by_name(name)?.unwrap_or(0),
-                None => 0,
+            let assumed_nature = match assumed_nature_name.as_deref() {
+                Some(name) => resolve_nature(self.catalog_repo, &master, name)?,
+                None => ResolvedNature::default(),
             };
             let opponent_move_names = usage
                 .moves
                 .iter()
                 .map(|move_usage| move_usage.name.clone())
                 .collect::<Vec<_>>();
-            let Some(opponent_stats) = build_assumed_stats(
-                &master,
-                opponent_species_id,
-                &assumed_evs,
-                assumed_nature_id,
-            ) else {
+            let Some(opponent_stats) =
+                build_assumed_stats(&master, opponent_species_id, &assumed_evs, assumed_nature)
+            else {
                 opponents.push(OpponentSelectionSupport {
                     slot_index: opponent.slot_index,
                     opponent_name,
@@ -291,6 +288,12 @@ impl ResolvedMyPokemon {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct ResolvedNature {
+    increased_stat_id: u32,
+    decreased_stat_id: u32,
+}
+
 fn top_effort_values(usage: &PokemonUsageSummary) -> EffortValueSpread {
     usage
         .effort_values
@@ -324,7 +327,7 @@ fn build_assumed_stats(
     master: &champions_domain::catalog::BattleMasterData,
     species_id: u32,
     effort_values: &EffortValueSpread,
-    nature_id: u32,
+    nature: ResolvedNature,
 ) -> Option<[u32; 6]> {
     let base_stats = master.pokemon_stats.get(&species_id)?;
     let added_points = [
@@ -338,7 +341,7 @@ fn build_assumed_stats(
 
     let mut stats = [0; 6];
     for stat_idx in 0..6 {
-        let nature = nature_multiplier(master, nature_id, stat_idx);
+        let nature = nature_multiplier(nature, stat_idx);
         stats[stat_idx] = resolve_stat_value(
             base_stats[stat_idx],
             added_points[stat_idx],
@@ -353,21 +356,15 @@ fn ev_to_added_points(effort_value: u32) -> u32 {
     (effort_value + 4) / 8
 }
 
-fn nature_multiplier(
-    master: &champions_domain::catalog::BattleMasterData,
-    nature_id: u32,
-    stat_idx: usize,
-) -> f64 {
+fn nature_multiplier(nature: ResolvedNature, stat_idx: usize) -> f64 {
     if stat_idx == 0 {
         return 1.0;
     }
-    if let Some(nature) = master.natures.get(&nature_id) {
-        if nature.increased_stat_id == (stat_idx + 1) as u32 {
-            return 1.1;
-        }
-        if nature.decreased_stat_id == (stat_idx + 1) as u32 {
-            return 0.9;
-        }
+    if nature.increased_stat_id == (stat_idx + 1) as u32 {
+        return 1.1;
+    }
+    if nature.decreased_stat_id == (stat_idx + 1) as u32 {
+        return 0.9;
     }
     1.0
 }
@@ -390,6 +387,55 @@ fn build_speed_comparison(my_speed: u32, opponent_speed: u32) -> Option<SpeedCom
         opponent_speed,
         my_first_chance_percent: my_first,
         opponent_first_chance_percent: opponent_first,
+    })
+}
+
+fn resolve_nature(
+    catalog_repo: &dyn CatalogRepository,
+    master: &champions_domain::catalog::BattleMasterData,
+    nature_name: &str,
+) -> Result<ResolvedNature, BuildSelectionSupportError> {
+    if let Some(nature_id) = catalog_repo.find_nature_id_by_name(nature_name)?
+        && let Some(nature) = master.natures.get(&nature_id)
+    {
+        return Ok(ResolvedNature {
+            increased_stat_id: nature.increased_stat_id,
+            decreased_stat_id: nature.decreased_stat_id,
+        });
+    }
+
+    Ok(fallback_nature(nature_name).unwrap_or_default())
+}
+
+fn fallback_nature(nature_name: &str) -> Option<ResolvedNature> {
+    let nature = match nature_name.trim() {
+        "さみしがり" => (2, 3),
+        "いじっぱり" => (2, 4),
+        "やんちゃ" => (2, 5),
+        "ゆうかん" => (2, 6),
+        "ずぶとい" => (3, 2),
+        "わんぱく" => (3, 4),
+        "のうてんき" => (3, 5),
+        "のんき" => (3, 6),
+        "ひかえめ" => (4, 2),
+        "おっとり" => (4, 3),
+        "うっかりや" => (4, 5),
+        "れいせい" => (4, 6),
+        "おだやか" => (5, 2),
+        "おとなしい" => (5, 3),
+        "しんちょう" => (5, 4),
+        "なまいき" => (5, 6),
+        "おくびょう" => (6, 2),
+        "せっかち" => (6, 3),
+        "ようき" => (6, 4),
+        "むじゃき" => (6, 5),
+        "がんばりや" | "すなお" | "てれや" | "きまぐれ" | "まじめ" => (0, 0),
+        _ => return None,
+    };
+
+    Some(ResolvedNature {
+        increased_stat_id: nature.0,
+        decreased_stat_id: nature.1,
     })
 }
 
