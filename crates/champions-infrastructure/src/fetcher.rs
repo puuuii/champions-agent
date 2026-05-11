@@ -31,20 +31,28 @@ impl UsageFetcher for GameWithUsageFetcher {
     ) -> Result<Vec<PokemonUsageSummary>, UsageFetchError> {
         let html =
             fetch_html(GAMEWITH_URL).map_err(|e| UsageFetchError::FetchFailed(e.to_string()))?;
+
         let js_text =
             extract_js_object(&html).map_err(|e| UsageFetchError::ParseFailed(e.to_string()))?;
+
         let json_text = js_to_json(&js_text);
+
         let raw_data: IndexMap<String, Value> = serde_json::from_str(&json_text)
             .map_err(|e| UsageFetchError::ParseFailed(e.to_string()))?;
+
         Ok(build_pokemon_list(raw_data))
     }
 }
 
-fn fetch_html(url: &str) -> Result<String, reqwest::Error> {
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("Mozilla/5.0")
-        .build()?;
-    client.get(url).send()?.text()
+fn fetch_html(url: &str) -> Result<String, String> {
+    let res = minreq::get(url)
+        .with_header("User-Agent", "Mozilla/5.0")
+        .send()
+        .map_err(|e| e.to_string())?;
+
+    res.as_str()
+        .map(|s| s.to_string())
+        .map_err(|e| e.to_string())
 }
 
 fn extract_js_object(html: &str) -> Result<String, String> {
@@ -176,4 +184,23 @@ fn parse_evs(v: &Value) -> Vec<EffortValueUsage> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fetch_usage_real() {
+        let fetcher = GameWithUsageFetcher::new();
+        let result = fetcher.fetch_usage(UsageSource::GameWith);
+        match result {
+            Ok(data) => {
+                assert!(!data.is_empty());
+            }
+            Err(e) => {
+                panic!("Fetch failed: {}", e);
+            }
+        }
+    }
 }
