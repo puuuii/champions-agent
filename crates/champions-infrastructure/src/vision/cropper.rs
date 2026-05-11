@@ -1,15 +1,5 @@
-use std::{
-    fs,
-    io::ErrorKind,
-    path::{Path, PathBuf},
-};
-
 use champions_application::{OcrImage, PartyImageSet, RecognitionImageExtractor, SlotImage};
 use champions_domain::recognition::SelectionSlot;
-use image::ExtendedColorType;
-
-const TARGET_TEXT_DEBUG_FILENAME: &str = "latest_crop_selection_text.png";
-const BATTLE_RESULT_DEBUG_FILENAME: &str = "latest_crop_battle_result_text.png";
 
 #[derive(Debug, Clone)]
 pub struct CropConfig {
@@ -24,15 +14,10 @@ pub struct OpenCvCropper {
     opponent_config: CropConfig,
     ocr_config: CropConfig,
     battle_result_config: CropConfig,
-    debug_output_dir: PathBuf,
 }
 
 impl OpenCvCropper {
     pub fn new() -> Self {
-        Self::with_debug_output_dir(std::env::current_dir().unwrap_or_else(|_| ".".into()))
-    }
-
-    fn with_debug_output_dir(debug_output_dir: impl Into<PathBuf>) -> Self {
         Self {
             opponent_config: CropConfig {
                 center_x: 0.87,
@@ -56,7 +41,6 @@ impl OpenCvCropper {
                 size_w: 0.13,
                 width_ratio: 6.0,
             },
-            debug_output_dir: debug_output_dir.into(),
         }
     }
 
@@ -126,45 +110,6 @@ impl OpenCvCropper {
             1
         }
     }
-
-    fn debug_output_path(&self, file_name: &str) -> PathBuf {
-        self.debug_output_dir.join(file_name)
-    }
-
-    fn save_debug_crop(&self, file_name: &str, width: u32, height: u32, rgb_bytes: &[u8]) {
-        let path = self.debug_output_path(file_name);
-
-        if let Err(error) = ensure_parent_dir(&path) {
-            tracing::warn!(
-                "failed to prepare debug crop output directory for {}: {}",
-                path.display(),
-                error
-            );
-            return;
-        }
-
-        if let Err(error) =
-            image::save_buffer(&path, rgb_bytes, width, height, ExtendedColorType::Rgb8)
-        {
-            tracing::warn!("failed to save debug crop {}: {}", path.display(), error);
-        }
-    }
-
-    fn clear_debug_crop(&self, file_name: &str) {
-        let path = self.debug_output_path(file_name);
-
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == ErrorKind::NotFound => {}
-            Err(error) => {
-                tracing::warn!(
-                    "failed to remove stale debug crop {}: {}",
-                    path.display(),
-                    error
-                )
-            }
-        }
-    }
 }
 
 impl Default for OpenCvCropper {
@@ -190,24 +135,16 @@ impl RecognitionImageExtractor for OpenCvCropper {
             &self.ocr_config,
             0,
         ) {
-            Some((rgb_bytes, w, h)) => {
-                self.save_debug_crop(TARGET_TEXT_DEBUG_FILENAME, w, h, &rgb_bytes);
-
-                OcrImage {
-                    width: w,
-                    height: h,
-                    rgb_bytes,
-                }
-            }
-            None => {
-                self.clear_debug_crop(TARGET_TEXT_DEBUG_FILENAME);
-
-                OcrImage {
-                    width: 0,
-                    height: 0,
-                    rgb_bytes: Vec::new(),
-                }
-            }
+            Some((rgb_bytes, w, h)) => OcrImage {
+                width: w,
+                height: h,
+                rgb_bytes,
+            },
+            None => OcrImage {
+                width: 0,
+                height: 0,
+                rgb_bytes: Vec::new(),
+            },
         }
     }
 
@@ -227,24 +164,16 @@ impl RecognitionImageExtractor for OpenCvCropper {
             &self.battle_result_config,
             0,
         ) {
-            Some((rgb_bytes, w, h)) => {
-                self.save_debug_crop(BATTLE_RESULT_DEBUG_FILENAME, w, h, &rgb_bytes);
-
-                OcrImage {
-                    width: w,
-                    height: h,
-                    rgb_bytes,
-                }
-            }
-            None => {
-                self.clear_debug_crop(BATTLE_RESULT_DEBUG_FILENAME);
-
-                OcrImage {
-                    width: 0,
-                    height: 0,
-                    rgb_bytes: Vec::new(),
-                }
-            }
+            Some((rgb_bytes, w, h)) => OcrImage {
+                width: w,
+                height: h,
+                rgb_bytes,
+            },
+            None => OcrImage {
+                width: 0,
+                height: 0,
+                rgb_bytes: Vec::new(),
+            },
         }
     }
 
@@ -258,8 +187,6 @@ impl RecognitionImageExtractor for OpenCvCropper {
         let mut slots = Vec::with_capacity(6);
 
         for i in 0..6u8 {
-            let file_name = opponent_slot_debug_filename(i as usize);
-
             if let Some((rgb_bytes, w, h)) = self.crop_region(
                 frame_width,
                 frame_height,
@@ -268,156 +195,15 @@ impl RecognitionImageExtractor for OpenCvCropper {
                 &self.opponent_config,
                 i as usize,
             ) {
-                self.save_debug_crop(&file_name, w, h, &rgb_bytes);
                 slots.push(SlotImage {
                     slot: SelectionSlot(i),
                     width: w,
                     height: h,
                     rgb_bytes,
                 });
-            } else {
-                self.clear_debug_crop(&file_name);
             }
         }
 
         PartyImageSet { slots }
-    }
-}
-
-fn opponent_slot_debug_filename(slot_index: usize) -> String {
-    format!("latest_crop_opponent_slot_{}.png", slot_index + 1)
-}
-
-fn ensure_parent_dir(path: &Path) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
-    use super::{
-        BATTLE_RESULT_DEBUG_FILENAME, OpenCvCropper, TARGET_TEXT_DEBUG_FILENAME,
-        opponent_slot_debug_filename,
-    };
-    use champions_application::RecognitionImageExtractor;
-
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new(name: &str) -> Self {
-            let unique = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system clock should be after unix epoch")
-                .as_nanos();
-            let path = std::env::temp_dir().join(format!(
-                "champions-agent-cropper-{name}-{}-{unique}",
-                std::process::id()
-            ));
-
-            fs::create_dir_all(&path).expect("failed to create test output dir");
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
-
-    #[test]
-    fn extract_target_text_image_saves_debug_crop_png() {
-        let output_dir = TestDir::new("selection");
-        let cropper = OpenCvCropper::with_debug_output_dir(output_dir.path());
-        let frame = sample_rgb_frame(100, 100);
-
-        let image = cropper.extract_target_text_image(100, 100, &frame);
-        let path = output_dir.path().join(TARGET_TEXT_DEBUG_FILENAME);
-
-        assert!(path.exists(), "expected {}", path.display());
-        assert_eq!(
-            image::image_dimensions(&path).expect("failed to read saved png"),
-            (image.width, image.height)
-        );
-    }
-
-    #[test]
-    fn extract_battle_result_text_image_saves_debug_crop_png() {
-        let output_dir = TestDir::new("battle-result");
-        let cropper = OpenCvCropper::with_debug_output_dir(output_dir.path());
-        let frame = sample_rgb_frame(100, 100);
-
-        let image = cropper.extract_battle_result_text_image(100, 100, &frame);
-        let path = output_dir.path().join(BATTLE_RESULT_DEBUG_FILENAME);
-
-        assert!(path.exists(), "expected {}", path.display());
-        assert_eq!(
-            image::image_dimensions(&path).expect("failed to read saved png"),
-            (image.width, image.height)
-        );
-    }
-
-    #[test]
-    fn extract_party_slots_saves_each_slot_debug_crop_png() {
-        let output_dir = TestDir::new("opponent-slots");
-        let cropper = OpenCvCropper::with_debug_output_dir(output_dir.path());
-        let frame = sample_rgb_frame(100, 100);
-
-        let party = cropper.extract_party_slots(100, 100, &frame);
-
-        assert_eq!(party.slots.len(), 6);
-
-        for slot_index in 0..6 {
-            let path = output_dir
-                .path()
-                .join(opponent_slot_debug_filename(slot_index));
-            assert!(path.exists(), "expected {}", path.display());
-        }
-    }
-
-    #[test]
-    fn empty_target_crop_removes_stale_debug_png() {
-        let output_dir = TestDir::new("stale-cleanup");
-        let cropper = OpenCvCropper::with_debug_output_dir(output_dir.path());
-        let stale_path = output_dir.path().join(TARGET_TEXT_DEBUG_FILENAME);
-        fs::write(&stale_path, b"stale").expect("failed to seed stale file");
-
-        let image = cropper.extract_target_text_image(0, 0, &[]);
-
-        assert_eq!(image.width, 0);
-        assert_eq!(image.height, 0);
-        assert!(
-            !stale_path.exists(),
-            "stale debug crop should be removed: {}",
-            stale_path.display()
-        );
-    }
-
-    fn sample_rgb_frame(width: u32, height: u32) -> Vec<u8> {
-        let pixel_count = width as usize * height as usize;
-        let mut frame = Vec::with_capacity(pixel_count * 3);
-
-        for idx in 0..pixel_count {
-            frame.push((idx % 251) as u8);
-            frame.push(((idx + 53) % 251) as u8);
-            frame.push(((idx + 101) % 251) as u8);
-        }
-
-        frame
     }
 }
