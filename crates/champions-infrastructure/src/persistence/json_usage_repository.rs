@@ -3,7 +3,7 @@ use champions_application::errors::UsageError;
 use champions_application::ports::UsageRepository;
 use champions_domain::usage::PokemonUsageSummary;
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub struct JsonUsageRepository {
     path: PathBuf,
@@ -18,16 +18,44 @@ impl JsonUsageRepository {
         }
     }
 
+    fn map_load_poison<T>(error: PoisonError<T>) -> UsageError {
+        UsageError::LoadFailed(format!("usage cache poisoned: {error}"))
+    }
+
+    fn map_save_poison<T>(error: PoisonError<T>) -> UsageError {
+        UsageError::SaveFailed(format!("usage cache poisoned: {error}"))
+    }
+
+    fn read_cache(
+        &self,
+    ) -> Result<RwLockReadGuard<'_, Option<Vec<PokemonUsageSummary>>>, UsageError> {
+        self.cache.read().map_err(Self::map_load_poison)
+    }
+
+    fn write_cache_for_load(
+        &self,
+    ) -> Result<RwLockWriteGuard<'_, Option<Vec<PokemonUsageSummary>>>, UsageError> {
+        self.cache.write().map_err(Self::map_load_poison)
+    }
+
+    fn write_cache_for_save(
+        &self,
+    ) -> Result<RwLockWriteGuard<'_, Option<Vec<PokemonUsageSummary>>>, UsageError> {
+        self.cache.write().map_err(Self::map_save_poison)
+    }
+
     fn ensure_loaded(&self) -> Result<(), UsageError> {
         {
-            let read = self.cache.read().unwrap();
+            let read = self.read_cache()?;
             if read.is_some() {
                 return Ok(());
             }
         }
         let data = self.load_from_disk()?;
-        let mut write = self.cache.write().unwrap();
-        *write = Some(data);
+        let mut write = self.write_cache_for_load()?;
+        if write.is_none() {
+            *write = Some(data);
+        }
         Ok(())
     }
 
@@ -46,20 +74,24 @@ impl JsonUsageRepository {
 impl UsageRepository for JsonUsageRepository {
     fn find_by_pokemon_name(&self, name: &str) -> Result<Option<PokemonUsageSummary>, UsageError> {
         self.ensure_loaded()?;
-        let read = self.cache.read().unwrap();
-        let data = read.as_ref().unwrap();
-        Ok(data.iter().find(|u| u.name == name).cloned())
+        let read = self.read_cache()?;
+        Ok(read
+            .as_ref()
+            .and_then(|data| data.iter().find(|u| u.name == name).cloned()))
     }
 
     fn find_many_by_names(&self, names: &[String]) -> Result<Vec<PokemonUsageSummary>, UsageError> {
         self.ensure_loaded()?;
-        let read = self.cache.read().unwrap();
-        let data = read.as_ref().unwrap();
-        let results: Vec<PokemonUsageSummary> = data
-            .iter()
-            .filter(|u| names.contains(&u.name))
-            .cloned()
-            .collect();
+        let read = self.read_cache()?;
+        let results = read
+            .as_ref()
+            .map(|data| {
+                data.iter()
+                    .filter(|u| names.contains(&u.name))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
         Ok(results)
     }
 
@@ -69,9 +101,9 @@ impl UsageRepository for JsonUsageRepository {
         }
         let json = serde_json::to_string_pretty(&data)
             .map_err(|e| UsageError::SaveFailed(e.to_string()))?;
+        let mut write = self.write_cache_for_save()?;
         atomic_write(&self.path, json.as_bytes())
             .map_err(|e| UsageError::SaveFailed(e.to_string()))?;
-        let mut write = self.cache.write().unwrap();
         *write = Some(data);
         Ok(())
     }
@@ -148,6 +180,30 @@ mod tests {
         let names = vec!["ピカチュウ".to_string(), "フシギダネ".to_string()];
         let results = repo.find_many_by_names(&names).unwrap();
         assert_eq!(results.len(), 2);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_replace_all_replaces_preloaded_cache() {
+        let dir = test_dir();
+        let path = dir.join("usage_replace_loaded.json");
+        let repo = JsonUsageRepository::new(path.clone());
+
+        repo.replace_all(vec![sample_usage("ピカチュウ")]).unwrap();
+        let initial = repo.find_by_pokemon_name("ピカチュウ").unwrap();
+        assert!(initial.is_some());
+
+        repo.replace_all(vec![sample_usage("ミュウ")]).unwrap();
+
+        assert!(repo.find_by_pokemon_name("ピカチュウ").unwrap().is_none());
+        assert_eq!(
+            repo.find_by_pokemon_name("ミュウ")
+                .unwrap()
+                .as_ref()
+                .map(|usage| usage.name.as_str()),
+            Some("ミュウ")
+        );
 
         let _ = fs::remove_file(&path);
     }
