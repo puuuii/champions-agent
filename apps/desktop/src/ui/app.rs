@@ -1084,8 +1084,7 @@ impl PokeEditorApp {
                 ]
                 .spacing(10);
                 let mut ev_row = row![
-                    container(text("努力値").font(JAPANESE_FONT).size(16))
-                        .width(Length::Fixed(80.0))
+                    container(text("配分").font(JAPANESE_FONT).size(16)).width(Length::Fixed(80.0))
                 ]
                 .spacing(10);
                 let mut nature_row = row![
@@ -1530,7 +1529,7 @@ fn selection_support_matchup_row<'a>(matchup: &'a PokemonMatchupSupport) -> Elem
 fn format_opponent_assumption(assumption: &OpponentAssumption) -> String {
     let nature = assumption.nature_name.as_deref().unwrap_or("不明");
     format!(
-        "想定能力値(最頻EV/性格反映): 性格 {nature} / EV {} / 実数 {}",
+        "想定能力値(最頻配分/性格反映): 性格 {nature} / 配分 {} / 実数 {}",
         format_effort_value_spread(&assumption.effort_values),
         format_actual_stats(&assumption.stats),
     )

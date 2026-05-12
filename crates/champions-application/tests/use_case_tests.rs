@@ -705,6 +705,67 @@ fn build_selection_support_calculates_speed_and_two_hit_ko() {
 }
 
 #[test]
+fn build_selection_support_uses_usage_distribution_points_for_opponent_stats() {
+    let catalog = FakeCatalogRepository::with_species(vec!["アタッカー", "タンク"]);
+    let repo = FakeUsageRepository::new(vec![PokemonUsageSummary {
+        id: "2".to_string(),
+        name: "タンク".to_string(),
+        types: vec!["じめん".to_string()],
+        moves: vec![MoveUsage {
+            name: "10まんボルト".to_string(),
+            rate: "100%".to_string(),
+        }],
+        items: vec![],
+        abilities: vec![],
+        effort_values: vec![EffortValueUsage {
+            h: 0,
+            a: 0,
+            b: 0,
+            c: 32,
+            d: 0,
+            s: 32,
+            rate: "100%".to_string(),
+        }],
+        natures: vec![NatureUsage {
+            name: "おくびょう".to_string(),
+            rate: "100%".to_string(),
+        }],
+    }]);
+    let uc = BuildSelectionSupportUseCase::new(&catalog, &repo);
+
+    let result = uc
+        .execute(BuildSelectionSupportQuery {
+            my_party: vec![PokemonBuild {
+                species_name: "アタッカー".to_string(),
+                effort_values: EffortValueSpread {
+                    h: 175,
+                    a: 150,
+                    b: 100,
+                    c: 80,
+                    d: 90,
+                    s: 110,
+                },
+                ..Default::default()
+            }],
+            opponents: vec![OpponentSelectionInput {
+                slot_index: 0,
+                name: "タンク".to_string(),
+            }],
+        })
+        .unwrap();
+
+    let opponent = &result.opponents[0];
+    let assumption = opponent.assumption.as_ref().unwrap();
+    assert_eq!(assumption.stats, [175, 90, 140, 112, 100, 123]);
+
+    let speed = opponent.matchups[0].speed.as_ref().unwrap();
+    assert_eq!(speed.my_speed, 110);
+    assert_eq!(speed.opponent_speed, 123);
+    assert_eq!(speed.my_first_chance_percent, 0.0);
+    assert_eq!(speed.opponent_first_chance_percent, 100.0);
+}
+
+#[test]
 fn build_selection_support_reports_missing_usage() {
     let catalog = FakeCatalogRepository::with_species(vec!["アタッカー", "タンク"]);
     let repo = FakeUsageRepository::empty();

@@ -159,7 +159,7 @@ impl<'a> BuildSelectionSupportUseCase<'a> {
                 continue;
             };
 
-            let assumed_evs = top_effort_values(usage);
+            let assumed_distribution = top_effort_values(usage);
             let assumed_nature_name = top_nature_name(usage);
             let assumed_nature = match assumed_nature_name.as_deref() {
                 Some(name) => resolve_nature(self.catalog_repo, &master, name)?,
@@ -170,9 +170,12 @@ impl<'a> BuildSelectionSupportUseCase<'a> {
                 .iter()
                 .map(|move_usage| move_usage.name.clone())
                 .collect::<Vec<_>>();
-            let Some(opponent_stats) =
-                build_assumed_stats(&master, opponent_species_id, &assumed_evs, assumed_nature)
-            else {
+            let Some(opponent_stats) = build_assumed_stats(
+                &master,
+                opponent_species_id,
+                &assumed_distribution,
+                assumed_nature,
+            ) else {
                 opponents.push(OpponentSelectionSupport {
                     slot_index: opponent.slot_index,
                     opponent_name,
@@ -224,7 +227,7 @@ impl<'a> BuildSelectionSupportUseCase<'a> {
                 slot_index: opponent.slot_index,
                 opponent_name,
                 assumption: Some(OpponentAssumption {
-                    effort_values: assumed_evs,
+                    effort_values: assumed_distribution,
                     nature_name: assumed_nature_name,
                     stats: opponent_stats,
                 }),
@@ -331,13 +334,15 @@ fn build_assumed_stats(
 ) -> Option<[u32; 6]> {
     let base_stats = master.pokemon_stats.get(&species_id)?;
     let added_points = [
-        ev_to_added_points(effort_values.h),
-        ev_to_added_points(effort_values.a),
-        ev_to_added_points(effort_values.b),
-        ev_to_added_points(effort_values.c),
-        ev_to_added_points(effort_values.d),
-        ev_to_added_points(effort_values.s),
+        effort_values.h,
+        effort_values.a,
+        effort_values.b,
+        effort_values.c,
+        effort_values.d,
+        effort_values.s,
     ];
+    // GameWith's evDistributions are already expressed as level-50 stat additions.
+    // Converting them again as raw EVs collapses spreads like S32 into S4.
 
     let mut stats = [0; 6];
     for stat_idx in 0..6 {
@@ -350,10 +355,6 @@ fn build_assumed_stats(
         );
     }
     Some(stats)
-}
-
-fn ev_to_added_points(effort_value: u32) -> u32 {
-    (effort_value + 4) / 8
 }
 
 fn nature_multiplier(nature: ResolvedNature, stat_idx: usize) -> f64 {
