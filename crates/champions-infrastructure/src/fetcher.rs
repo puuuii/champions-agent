@@ -6,7 +6,7 @@ use champions_domain::usage::{
 use indexmap::IndexMap;
 use regex::Regex;
 use serde_json::Value;
-use std::sync::LazyLock;
+use std::{sync::LazyLock, time::Instant};
 
 static JS_OBJ_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)const pkchPokemonData\s*=\s*(\{.*?\});").unwrap());
@@ -27,24 +27,42 @@ impl GameWithUsageFetcher {
 impl UsageFetcher for GameWithUsageFetcher {
     fn fetch_usage(
         &self,
-        _source: UsageSource,
+        source: UsageSource,
     ) -> Result<Vec<PokemonUsageSummary>, UsageFetchError> {
-        let html =
-            fetch_html(GAMEWITH_URL).map_err(|e| UsageFetchError::FetchFailed(e.to_string()))?;
+        let started_at = Instant::now();
+        tracing::info!(?source, url = GAMEWITH_URL, "fetching usage data");
 
-        let js_text =
-            extract_js_object(&html).map_err(|e| UsageFetchError::ParseFailed(e.to_string()))?;
+        let html = fetch_html(GAMEWITH_URL).map_err(|error| {
+            tracing::error!(%error, url = GAMEWITH_URL, "failed to fetch usage HTML");
+            UsageFetchError::FetchFailed(error.to_string())
+        })?;
+
+        let js_text = extract_js_object(&html).map_err(|error| {
+            tracing::error!(%error, "failed to extract usage data JavaScript object");
+            UsageFetchError::ParseFailed(error.to_string())
+        })?;
 
         let json_text = js_to_json(&js_text);
 
-        let raw_data: IndexMap<String, Value> = serde_json::from_str(&json_text)
-            .map_err(|e| UsageFetchError::ParseFailed(e.to_string()))?;
+        let raw_data: IndexMap<String, Value> =
+            serde_json::from_str(&json_text).map_err(|error| {
+                tracing::error!(%error, "failed to parse usage data JSON");
+                UsageFetchError::ParseFailed(error.to_string())
+            })?;
 
-        Ok(build_pokemon_list(raw_data))
+        let usage = build_pokemon_list(raw_data);
+        tracing::info!(
+            count = usage.len(),
+            elapsed_ms = started_at.elapsed().as_millis() as u64,
+            "usage data fetched",
+        );
+
+        Ok(usage)
     }
 }
 
 fn fetch_html(url: &str) -> Result<String, String> {
+    tracing::debug!(url, "requesting usage HTML");
     let res = minreq::get(url)
         .with_header("User-Agent", "Mozilla/5.0")
         .send()

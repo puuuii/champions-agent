@@ -16,6 +16,7 @@ use champions_interface::{
     PokemonUsageSummaryView,
 };
 use std::sync::Arc;
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SuggestionKind {
@@ -62,17 +63,40 @@ impl DesktopAppServices {
     }
 
     pub fn load_party(&self) -> Result<SavedParty, String> {
-        LoadPartyUseCase::new(self.party_repo.as_ref())
-            .execute()
-            .map(|result| result.party)
-            .map_err(|error| error.to_string())
+        match LoadPartyUseCase::new(self.party_repo.as_ref()).execute() {
+            Ok(result) => {
+                tracing::info!(
+                    pokemons = result.party.pokemons.len(),
+                    saved_pokemons = result.party.saved_pokemons.len(),
+                    "saved party loaded",
+                );
+                Ok(result.party)
+            }
+            Err(error) => {
+                tracing::error!(%error, "failed to load saved party");
+                Err(error.to_string())
+            }
+        }
     }
 
     pub fn save_party(&self, party: SavedParty) -> Result<(), String> {
-        SavePartyUseCase::new(self.party_repo.as_ref())
-            .execute(SavePartyCommand { party })
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        let party_len = party.pokemons.len();
+        let saved_pokemons_len = party.saved_pokemons.len();
+
+        match SavePartyUseCase::new(self.party_repo.as_ref()).execute(SavePartyCommand { party }) {
+            Ok(_) => {
+                tracing::info!(
+                    pokemons = party_len,
+                    saved_pokemons = saved_pokemons_len,
+                    "saved party persisted",
+                );
+                Ok(())
+            }
+            Err(error) => {
+                tracing::error!(%error, "failed to persist saved party");
+                Err(error.to_string())
+            }
+        }
     }
 
     pub fn suggest_names(&self, kind: SuggestionKind, query: &str, limit: usize) -> Vec<String> {
@@ -106,12 +130,30 @@ impl DesktopAppServices {
     }
 
     pub fn refresh_usage_data(&self) -> Result<usize, String> {
-        RefreshUsageDataUseCase::new(self.usage_fetcher.as_ref(), self.usage_repo.as_ref())
+        let started_at = Instant::now();
+        tracing::info!(source = ?UsageSource::GameWith, "refreshing usage data");
+
+        match RefreshUsageDataUseCase::new(self.usage_fetcher.as_ref(), self.usage_repo.as_ref())
             .execute(RefreshUsageDataCommand {
                 source: UsageSource::GameWith,
-            })
-            .map(|result| result.count)
-            .map_err(|error| error.to_string())
+            }) {
+            Ok(result) => {
+                tracing::info!(
+                    count = result.count,
+                    elapsed_ms = started_at.elapsed().as_millis() as u64,
+                    "usage data refreshed",
+                );
+                Ok(result.count)
+            }
+            Err(error) => {
+                tracing::error!(
+                    %error,
+                    elapsed_ms = started_at.elapsed().as_millis() as u64,
+                    "failed to refresh usage data",
+                );
+                Err(error.to_string())
+            }
+        }
     }
 
     pub fn build_selection_support(
@@ -119,12 +161,32 @@ impl DesktopAppServices {
         my_party: Vec<PokemonBuild>,
         opponents: Vec<OpponentSelectionInput>,
     ) -> Result<BuildSelectionSupportResult, String> {
-        BuildSelectionSupportUseCase::new(self.catalog_repo.as_ref(), self.usage_repo.as_ref())
-            .execute(BuildSelectionSupportQuery {
-                my_party,
-                opponents,
-            })
-            .map_err(|error| error.to_string())
+        tracing::debug!(
+            my_party_len = my_party.len(),
+            opponent_len = opponents.len(),
+            "building selection support",
+        );
+
+        match BuildSelectionSupportUseCase::new(
+            self.catalog_repo.as_ref(),
+            self.usage_repo.as_ref(),
+        )
+        .execute(BuildSelectionSupportQuery {
+            my_party,
+            opponents,
+        }) {
+            Ok(result) => {
+                tracing::debug!(
+                    opponent_len = result.opponents.len(),
+                    "selection support built",
+                );
+                Ok(result)
+            }
+            Err(error) => {
+                tracing::error!(%error, "failed to build selection support");
+                Err(error.to_string())
+            }
+        }
     }
 }
 

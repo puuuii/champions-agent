@@ -73,6 +73,12 @@ impl RuntimeBuilder {
     }
 
     pub fn build(self) -> (RuntimeHandle, RuntimeWorkers) {
+        tracing::info!(
+            preview_max_width = self.preview_max_width,
+            preview_target_fps = self.preview_target_fps,
+            recognition_enabled = self.recognition_port.is_some(),
+            "building runtime handle and workers",
+        );
         let frame_source = self.frame_source.expect("frame_source is required");
         let preview_converter = self
             .preview_converter
@@ -149,6 +155,15 @@ impl RuntimeWorkers {
             preview_max_width,
             preview_target_fps,
         } = self;
+        let has_recognition_worker = recognition_port.is_some();
+        let _span = tracing::info_span!(
+            "runtime_workers",
+            preview_max_width,
+            preview_target_fps,
+            has_recognition_worker,
+        )
+        .entered();
+        tracing::info!("runtime workers starting");
 
         let control = Arc::new(RuntimeControl::new(preview_max_width, preview_target_fps));
         let event_seq = EventSequencer::default();
@@ -193,7 +208,7 @@ impl RuntimeWorkers {
             &shutdown_signal,
             &control,
             &event_seq,
-            recognition_worker.is_some(),
+            has_recognition_worker,
         )
         .await;
 
@@ -202,6 +217,7 @@ impl RuntimeWorkers {
         if let Some(recognition_worker) = recognition_worker {
             let _ = recognition_worker.await;
         }
+        tracing::info!("runtime workers stopped");
     }
 }
 
@@ -346,6 +362,8 @@ impl CaptureWorker {
     }
 
     fn run(&mut self) {
+        let _span = tracing::info_span!("capture_worker").entered();
+        tracing::info!("capture worker started");
         while !self.shutdown_token.is_shutdown() {
             if !self.control.is_capturing() {
                 std::thread::sleep(IDLE_POLL_INTERVAL);
@@ -364,7 +382,7 @@ impl CaptureWorker {
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    tracing::error!("capture error: {error}");
+                    tracing::error!(%error, "capture error");
                     blocking_send_event(&self.event_tx, &self.event_seq, |event_sequence| {
                         RuntimeEvent::Error {
                             event_sequence,
@@ -383,6 +401,7 @@ impl CaptureWorker {
                 std::thread::sleep(sleep_for);
             }
         }
+        tracing::info!("capture worker stopped");
     }
 }
 
@@ -401,6 +420,8 @@ impl PreviewWorker {
     }
 
     fn run(&mut self) {
+        let _span = tracing::info_span!("preview_worker").entered();
+        tracing::info!("preview worker started");
         let mut last_previewed_frame_seq: Option<FrameSequence> = None;
 
         while !self.shutdown_token.is_shutdown() {
@@ -431,6 +452,7 @@ impl PreviewWorker {
                 std::thread::sleep(sleep_for);
             }
         }
+        tracing::info!("preview worker stopped");
     }
 }
 
@@ -449,6 +471,8 @@ impl RecognitionWorker {
     }
 
     fn run(self) {
+        let _span = tracing::info_span!("recognition_worker").entered();
+        tracing::info!("recognition worker started");
         let mut scheduler = RecognitionScheduler::new();
         let mut battle_result_tracker = BattleResultPhaseTracker::default();
         let mut match_phase_tracker = MatchPhaseTracker::default();
@@ -462,6 +486,11 @@ impl RecognitionWorker {
             if next_generation != recognition_generation {
                 scheduler.reset();
                 battle_result_tracker.reset();
+                tracing::info!(
+                    previous_generation = recognition_generation,
+                    next_generation,
+                    "recognition generation updated; scheduler reset",
+                );
                 if let Some(phase) = match_phase_tracker.reset() {
                     send_match_phase_changed(&self.event_tx, &self.event_seq, phase);
                 }
@@ -494,6 +523,7 @@ impl RecognitionWorker {
             );
             std::thread::sleep(RECOGNITION_TICK_INTERVAL);
         }
+        tracing::info!("recognition worker stopped");
     }
 
     fn apply_manual_phase_request(
@@ -509,6 +539,11 @@ impl RecognitionWorker {
 
         *manual_phase_generation = next_generation;
         let phase = self.control.manual_phase();
+        tracing::info!(
+            ?phase,
+            generation = next_generation,
+            "manual phase request applied"
+        );
         battle_result_tracker.set_phase_hint(phase);
 
         if let Some(phase) = match_phase_tracker.force_phase(phase) {
@@ -530,6 +565,10 @@ impl RecognitionWorker {
         }
 
         *manual_scan_generation = next_generation;
+        tracing::info!(
+            generation = next_generation,
+            "manual selection scan requested"
+        );
         self.run_manual_selection_scan(
             scheduler,
             battle_result_tracker,
@@ -551,6 +590,7 @@ impl RecognitionWorker {
         }
 
         let Some(frame) = self.latest_frame.peek() else {
+            tracing::debug!("manual selection scan skipped because no frame is available");
             return;
         };
 
@@ -593,10 +633,10 @@ impl RecognitionWorker {
 
                         if current_state != previous_state {
                             tracing::debug!(
-                                "scheduler state: {:?} -> {:?} (text: {:?})",
-                                previous_state,
-                                current_state,
-                                result.raw_text
+                                previous_state = ?previous_state,
+                                current_state = ?current_state,
+                                raw_text = ?result.raw_text,
+                                "selection scheduler transitioned",
                             );
                         }
 
@@ -607,7 +647,7 @@ impl RecognitionWorker {
                         }
                     }
                     Err(error) => {
-                        tracing::warn!("OCR failed: {error}");
+                        tracing::warn!(%error, "selection OCR failed");
                         blocking_send_event(&self.event_tx, &self.event_seq, |event_sequence| {
                             RuntimeEvent::Error {
                                 event_sequence,
@@ -638,7 +678,7 @@ impl RecognitionWorker {
                         }
                     }
                     Err(error) => {
-                        tracing::warn!("battle result OCR failed: {error}");
+                        tracing::warn!(%error, "battle result OCR failed");
                     }
                 }
             }
@@ -687,14 +727,14 @@ impl RecognitionWorker {
                 });
 
                 tracing::info!(
-                    "opponent party identified (attempt {}): {} pokemon, {} conflicts",
-                    attempt_id,
-                    result.recognized_party.pokemons.len(),
-                    result.conflicts.len()
+                    attempt_id = *attempt_id,
+                    pokemon_count = result.recognized_party.pokemons.len(),
+                    conflict_count = result.conflicts.len(),
+                    "opponent party identified",
                 );
             }
             Err(error) => {
-                tracing::error!("party identification failed: {error}");
+                tracing::error!(%error, "party identification failed");
                 blocking_send_event(&self.event_tx, &self.event_seq, |event_sequence| {
                     RuntimeEvent::Error {
                         event_sequence,
@@ -846,9 +886,13 @@ async fn run_command_loop(
     event_seq: &EventSequencer,
     has_recognition_worker: bool,
 ) {
+    let _span = tracing::info_span!("runtime_command_loop", has_recognition_worker,).entered();
+    tracing::info!("runtime command loop started");
     while let Some(command) = command_rx.recv().await {
+        tracing::debug!(?command, "runtime command received");
         match command {
             RuntimeCommand::Shutdown => {
+                tracing::info!("runtime shutdown requested");
                 shutdown_signal.trigger();
                 send_event(event_tx, event_seq, |event_sequence| {
                     RuntimeEvent::RuntimeStopped { event_sequence }
@@ -857,6 +901,7 @@ async fn run_command_loop(
                 return;
             }
             RuntimeCommand::StartCapture => {
+                tracing::info!("capture started");
                 control.set_capturing(true);
                 send_event(event_tx, event_seq, |event_sequence| {
                     RuntimeEvent::CaptureStatusChanged {
@@ -867,6 +912,7 @@ async fn run_command_loop(
                 .await;
             }
             RuntimeCommand::StopCapture => {
+                tracing::info!("capture stopped");
                 control.set_capturing(false);
                 send_event(event_tx, event_seq, |event_sequence| {
                     RuntimeEvent::CaptureStatusChanged {
@@ -877,6 +923,7 @@ async fn run_command_loop(
                 .await;
             }
             RuntimeCommand::StartRecognition if has_recognition_worker => {
+                tracing::info!("recognition started");
                 control.set_recognition_enabled(true);
                 send_event(event_tx, event_seq, |event_sequence| {
                     RuntimeEvent::RecognitionStatusChanged {
@@ -887,6 +934,7 @@ async fn run_command_loop(
                 .await;
             }
             RuntimeCommand::StopRecognition => {
+                tracing::info!("recognition stopped");
                 control.set_recognition_enabled(false);
                 send_event(event_tx, event_seq, |event_sequence| {
                     RuntimeEvent::RecognitionStatusChanged {
@@ -896,27 +944,46 @@ async fn run_command_loop(
                 })
                 .await;
             }
-            RuntimeCommand::StartRecognition => {}
+            RuntimeCommand::StartRecognition => {
+                tracing::warn!(
+                    "start recognition ignored because recognition worker is unavailable"
+                );
+            }
             RuntimeCommand::ScanOpponentSelection if has_recognition_worker => {
+                tracing::info!("manual opponent selection scan queued");
                 control.request_manual_scan();
             }
-            RuntimeCommand::ScanOpponentSelection => {}
+            RuntimeCommand::ScanOpponentSelection => {
+                tracing::warn!(
+                    "manual opponent selection scan ignored because recognition worker is unavailable"
+                );
+            }
             RuntimeCommand::SetMatchPhase(phase) if has_recognition_worker => {
+                tracing::info!(?phase, "manual match phase queued");
                 control.set_manual_phase(phase);
             }
-            RuntimeCommand::SetMatchPhase(_) => {}
+            RuntimeCommand::SetMatchPhase(phase) => {
+                tracing::warn!(
+                    ?phase,
+                    "manual match phase ignored because recognition worker is unavailable",
+                );
+            }
             RuntimeCommand::SetPreviewEnabled(enabled) => {
+                tracing::debug!(enabled, "preview enabled updated");
                 control.set_preview_enabled(enabled);
             }
             RuntimeCommand::SetPreviewMaxWidth(preview_max_width) => {
+                tracing::debug!(preview_max_width, "preview max width updated");
                 control.set_preview_max_width(preview_max_width);
             }
             RuntimeCommand::SetPreviewTargetFps(preview_target_fps) => {
+                tracing::debug!(preview_target_fps, "preview target fps updated");
                 control.set_preview_target_fps(preview_target_fps);
             }
         }
     }
 
+    tracing::warn!("runtime command channel closed; shutting down");
     shutdown_signal.trigger();
     send_event(event_tx, event_seq, |event_sequence| {
         RuntimeEvent::RuntimeStopped { event_sequence }
@@ -946,6 +1013,7 @@ fn send_match_phase_changed(
     event_seq: &EventSequencer,
     phase: MatchPhase,
 ) {
+    tracing::info!(?phase, "match phase changed");
     blocking_send_event(event_tx, event_seq, |event_sequence| {
         RuntimeEvent::MatchPhaseChanged {
             event_sequence,

@@ -15,5 +15,8 @@ champions-runtime = { path = "../../crates/champions-runtime" }
 champions-interface = { path = "../../crates/champions-interface" }
 
 anyhow.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
 iced = { version = "0.14", features = ["tokio", "image", "advanced"] }
 tokio = { version = "1.52.2", features = ["full"] }

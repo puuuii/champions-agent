@@ -33,6 +33,13 @@ impl OnnxPartyIdentifier {
         onnx_path: impl AsRef<Path>,
         master_images_dir: impl AsRef<Path>,
     ) -> Result<Self, PartyIdentifierError> {
+        let onnx_path = onnx_path.as_ref();
+        let master_images_dir = master_images_dir.as_ref();
+        tracing::info!(
+            onnx_path = %onnx_path.display(),
+            master_images_dir = %master_images_dir.display(),
+            "initializing ONNX party identifier",
+        );
         let session = Session::builder()
             .map_err(|e| PartyIdentifierError::ModelNotFound(format!("SessionBuilder error: {e}")))?
             .with_execution_providers([
@@ -42,11 +49,11 @@ impl OnnxPartyIdentifier {
             .map_err(|e| PartyIdentifierError::ModelNotFound(format!("EP error: {e}")))?
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(|e| PartyIdentifierError::ModelNotFound(format!("Opt error: {e}")))?
-            .commit_from_file(onnx_path.as_ref())
+            .commit_from_file(onnx_path)
             .map_err(|e| {
                 PartyIdentifierError::ModelNotFound(format!(
                     "Model load error ({}): {e}",
-                    onnx_path.as_ref().display()
+                    onnx_path.display()
                 ))
             })?;
 
@@ -57,6 +64,10 @@ impl OnnxPartyIdentifier {
         };
 
         identifier.cache_master_data(master_images_dir)?;
+        tracing::info!(
+            species_count = identifier.master_names.len(),
+            "ONNX party identifier initialized",
+        );
         Ok(identifier)
     }
 
@@ -80,7 +91,11 @@ impl OnnxPartyIdentifier {
             ));
         }
 
-        tracing::info!("loading {} master images...", paths.len());
+        tracing::info!(
+            master_dir = %master_dir.display(),
+            image_count = paths.len(),
+            "loading master images",
+        );
 
         let processed_data: Vec<(String, Array3<f32>)> = paths
             .into_par_iter()
@@ -98,7 +113,10 @@ impl OnnxPartyIdentifier {
             self.master_names.push(name);
         }
 
-        tracing::info!("master data cached: {} species", self.master_names.len());
+        tracing::info!(
+            species_count = self.master_names.len(),
+            "master data cached",
+        );
         Ok(())
     }
 

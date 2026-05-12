@@ -33,12 +33,21 @@ impl JsonUsageRepository {
 
     fn load_from_disk(&self) -> Result<Vec<PokemonUsageSummary>, UsageError> {
         if !self.path.exists() {
+            tracing::info!(
+                path = %self.path.display(),
+                "usage cache file is missing; starting with empty data",
+            );
             return Ok(Vec::new());
         }
         let data = std::fs::read_to_string(&self.path)
             .map_err(|e| UsageError::LoadFailed(e.to_string()))?;
         let usages: Vec<PokemonUsageSummary> = serde_json::from_str(&data)
             .map_err(|e| UsageError::LoadFailed(format!("usage.json parse: {e}")))?;
+        tracing::info!(
+            path = %self.path.display(),
+            count = usages.len(),
+            "usage data loaded from disk",
+        );
         Ok(usages)
     }
 }
@@ -72,7 +81,14 @@ impl UsageRepository for JsonUsageRepository {
         atomic_write(&self.path, json.as_bytes())
             .map_err(|e| UsageError::SaveFailed(e.to_string()))?;
         let mut write = self.cache.write().unwrap();
+        let count = data.len();
         *write = Some(data);
+        tracing::info!(
+            path = %self.path.display(),
+            count,
+            bytes = json.len(),
+            "usage data replaced and cache refreshed",
+        );
         Ok(())
     }
 }

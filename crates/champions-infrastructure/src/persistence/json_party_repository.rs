@@ -17,12 +17,22 @@ impl JsonPartyRepository {
 impl PartyRepository for JsonPartyRepository {
     fn load_my_party(&self) -> Result<SavedParty, PartyRepositoryError> {
         if !self.path.exists() {
+            tracing::info!(
+                path = %self.path.display(),
+                "party file is missing; returning default party",
+            );
             return Ok(SavedParty::default());
         }
         let data = std::fs::read_to_string(&self.path)
             .map_err(|e| PartyRepositoryError::LoadFailed(e.to_string()))?;
         let party: SavedParty = serde_json::from_str(&data)
             .map_err(|e| PartyRepositoryError::LoadFailed(format!("JSON parse: {e}")))?;
+        tracing::info!(
+            path = %self.path.display(),
+            pokemons = party.pokemons.len(),
+            saved_pokemons = party.saved_pokemons.len(),
+            "party loaded from disk",
+        );
         Ok(party)
     }
 
@@ -35,6 +45,13 @@ impl PartyRepository for JsonPartyRepository {
             .map_err(|e| PartyRepositoryError::SaveFailed(e.to_string()))?;
         atomic_write(&self.path, json.as_bytes())
             .map_err(|e| PartyRepositoryError::SaveFailed(e.to_string()))?;
+        tracing::info!(
+            path = %self.path.display(),
+            pokemons = party.pokemons.len(),
+            saved_pokemons = party.saved_pokemons.len(),
+            bytes = json.len(),
+            "party saved to disk",
+        );
         Ok(())
     }
 }

@@ -33,6 +33,19 @@ impl DesktopComposition {
         let project_root = std::env::current_dir()?;
         let app_paths = AppPaths::from_project_root(&project_root);
         app_paths.ensure_writable_dirs()?;
+        crate::observability::init(&app_paths)?;
+
+        let _span = tracing::info_span!(
+            "desktop_compose",
+            project_root = %project_root.display(),
+        )
+        .entered();
+        tracing::info!(
+            user_data_dir = %app_paths.user_data_dir.display(),
+            cache_dir = %app_paths.cache_dir.display(),
+            model_dir = %app_paths.model_dir.display(),
+            "composing desktop application",
+        );
 
         let repositories = DesktopRepositories::load(&app_paths)?;
         RuntimeBootstrap::start(&app_paths, repositories.usage_repo.clone())?;
@@ -49,6 +62,7 @@ impl DesktopComposition {
 
     fn run(self) -> iced::Result {
         let app_services = self.app_services;
+        tracing::info!("launching iced daemon");
 
         iced::daemon(
             move || PokeEditorApp::new(app_services.clone()),
@@ -78,13 +92,20 @@ struct DesktopRepositories {
 impl DesktopRepositories {
     fn load(app_paths: &AppPaths) -> Result<Self> {
         let usage_json_path = app_paths.usage_json_path();
+        let party_json_path = app_paths.party_json_path();
+        tracing::info!(
+            master_data_dir = %app_paths.master_data_dir.display(),
+            usage_json_path = %usage_json_path.display(),
+            party_json_path = %party_json_path.display(),
+            "loading desktop repositories",
+        );
 
         let catalog_repo: Arc<dyn CatalogRepository> = Arc::new(CsvCatalogRepository::new(
             &app_paths.master_data_dir,
             Some(&usage_json_path),
         )?);
         let party_repo: Arc<dyn PartyRepository> =
-            Arc::new(JsonPartyRepository::new(app_paths.party_json_path()));
+            Arc::new(JsonPartyRepository::new(party_json_path));
         let usage_fetcher: Arc<dyn UsageFetcher> = Arc::new(GameWithUsageFetcher::new());
         let usage_repo: Arc<dyn UsageRepository> =
             Arc::new(JsonUsageRepository::new(usage_json_path));
@@ -102,7 +123,15 @@ struct RuntimeBootstrap;
 
 impl RuntimeBootstrap {
     fn start(app_paths: &AppPaths, usage_repo: Arc<dyn UsageRepository>) -> Result<()> {
+        let _span = tracing::info_span!("runtime_bootstrap").entered();
         let capture_config = CaptureConfig::default();
+        tracing::info!(
+            device_index = capture_config.device_index,
+            width = capture_config.width,
+            height = capture_config.height,
+            fps = capture_config.fps,
+            "starting runtime bootstrap",
+        );
         let frame_source = OpenCvFrameSource::open(&capture_config)?;
         let preview_converter = RgbaPreviewConverter;
 
@@ -114,6 +143,8 @@ impl RuntimeBootstrap {
 
         if let Some(recognition_port) = build_recognition_port(app_paths, usage_repo) {
             builder = builder.recognition_port(recognition_port);
+        } else {
+            tracing::warn!("recognition runtime disabled because model initialization failed");
         }
 
         let (handle, workers) = builder.build();
@@ -126,6 +157,7 @@ impl RuntimeBootstrap {
         );
 
         spawn_runtime_workers(command_sender, workers);
+        tracing::info!("runtime bootstrap completed");
         Ok(())
     }
 }
@@ -137,11 +169,18 @@ fn build_recognition_port(
     let onnx_path = app_paths.model_dir.join("dinov2_vits14.onnx");
     let ocr_model_dir = app_paths.model_dir.join("manga-ocr");
     let master_img_dir = app_paths.pokemon_images_dir.clone();
+    let _span = tracing::info_span!(
+        "build_recognition_port",
+        onnx_path = %onnx_path.display(),
+        ocr_model_dir = %ocr_model_dir.display(),
+        master_img_dir = %master_img_dir.display(),
+    )
+    .entered();
 
     let ocr_engine = match MangaOcrEngine::new(&ocr_model_dir) {
         Ok(engine) => engine,
         Err(error) => {
-            eprintln!("[Recognition] OCR initialization failed: {error}");
+            tracing::warn!(%error, "OCR initialization failed; continuing without recognition");
             return None;
         }
     };
@@ -149,12 +188,16 @@ fn build_recognition_port(
     let party_identifier = match OnnxPartyIdentifier::new(&onnx_path, &master_img_dir) {
         Ok(identifier) => identifier,
         Err(error) => {
-            eprintln!("[Recognition] ONNX initialization failed: {error}");
+            tracing::warn!(
+                %error,
+                "party identifier initialization failed; continuing without recognition",
+            );
             return None;
         }
     };
 
     let cropper = OpenCvCropper::new();
+    tracing::info!("recognition runtime initialized");
 
     Some(Box::new(RecognitionRuntimePort::new(
         ocr_engine,
@@ -166,16 +209,22 @@ fn build_recognition_port(
 
 fn spawn_runtime_workers(command_sender: CommandSender, workers: RuntimeWorkers) {
     std::thread::spawn(move || {
+        tracing::info!("runtime worker thread started");
         let runtime = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
         runtime.block_on(async move {
             start_runtime(&command_sender).await;
             workers.run().await;
         });
+        tracing::info!("runtime worker thread finished");
     });
 }
 
 async fn start_runtime(command_sender: &CommandSender) {
-    let _ = command_sender
+    match command_sender
         .send(champions_interface::RuntimeCommand::StartCapture)
-        .await;
+        .await
+    {
+        Ok(()) => tracing::info!("initial capture start command sent"),
+        Err(error) => tracing::error!(%error, "failed to send initial capture start command"),
+    }
 }

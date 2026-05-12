@@ -140,7 +140,7 @@ impl PokeEditorApp {
         let (saved_party, editor_status) = match services.load_party() {
             Ok(party) => (party, None),
             Err(error) => {
-                eprintln!("Failed to load party: {error}");
+                tracing::error!(%error, "failed to load saved party into UI state");
                 (
                     SavedParty::default(),
                     Some("保存済みパーティの読込に失敗しました".to_string()),
@@ -258,11 +258,12 @@ impl PokeEditorApp {
             }
             Message::MatchPhaseSelected(phase) => {
                 self.match_phase = phase;
+                tracing::info!(?phase, "manual match phase selected");
                 return Self::send_runtime_command(RuntimeCommand::SetMatchPhase(phase));
             }
             Message::RuntimeCommandSent(result) => {
                 if let Err(error) = result {
-                    eprintln!("[Runtime] command failed: {error}");
+                    tracing::error!(%error, "runtime command failed");
                 }
             }
             Message::RestorePokemonSelected(history_index) => {
@@ -312,6 +313,7 @@ impl PokeEditorApp {
                     return Task::none();
                 }
                 self.is_refreshing = true;
+                tracing::info!("usage data refresh requested from UI");
 
                 let services = self.services.clone();
 
@@ -333,9 +335,9 @@ impl PokeEditorApp {
                     Ok(count) => {
                         self.refresh_opponent_usage();
                         self.refresh_selection_support();
-                        println!("使用率データを {} 件更新しました", count);
+                        tracing::info!(count, "usage data refresh completed");
                     }
-                    Err(e) => eprintln!("使用率データの更新に失敗しました: {}", e),
+                    Err(error) => tracing::error!(%error, "usage data refresh failed"),
                 }
             }
         }
@@ -469,7 +471,7 @@ impl PokeEditorApp {
                 Ok(())
             }
             Err(error) => {
-                eprintln!("Failed to save party: {error}");
+                tracing::error!(%error, "failed to save party from UI");
                 self.editor_status = Some(format!("保存に失敗しました: {error}"));
                 Err(error)
             }
@@ -478,26 +480,40 @@ impl PokeEditorApp {
 
     fn handle_runtime_event(&mut self, event: RuntimeEvent) {
         match event {
-            RuntimeEvent::OpponentPartyRecognized { party, .. } => {
+            RuntimeEvent::OpponentPartyRecognized {
+                frame_sequence,
+                attempt_id,
+                party,
+                ..
+            } => {
+                tracing::info!(
+                    attempt_id = attempt_id.0,
+                    frame_sequence = frame_sequence.0,
+                    pokemon_count = party.pokemons.len(),
+                    conflict_count = party.conflicts.len(),
+                    "opponent party received by UI",
+                );
                 self.opponent_party = Some(OpponentPartyState::from_view(party));
                 self.active_tab = Tab::BattleSupport;
                 self.refresh_selection_support();
             }
             RuntimeEvent::MatchPhaseChanged { phase, .. } => {
+                tracing::debug!(?phase, "runtime match phase changed");
                 self.match_phase = phase;
             }
             RuntimeEvent::RecognitionStatusChanged {
                 status: champions_interface::RecognitionStatus::Stopped,
                 ..
             } => {
+                tracing::info!("recognition stopped");
                 self.match_phase = MatchPhase::Other;
             }
             RuntimeEvent::RuntimeStopped { .. } => {
                 self.match_phase = MatchPhase::Other;
-                println!("[Runtime] stopped");
+                tracing::info!("runtime stopped");
             }
             RuntimeEvent::Error { error, .. } => {
-                eprintln!("[Runtime] error: {:?}", error);
+                tracing::error!(?error, "runtime error");
             }
             _ => {}
         }

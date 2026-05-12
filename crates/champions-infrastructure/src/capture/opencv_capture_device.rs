@@ -76,6 +76,14 @@ pub struct OpenCvCaptureDevice {
 
 impl OpenCvCaptureDevice {
     pub fn open(config: &CaptureConfig) -> Result<Self, CaptureReadError> {
+        tracing::info!(
+            device_index = config.device_index,
+            backend = ?config.backend,
+            width = config.width,
+            height = config.height,
+            fps = config.fps,
+            "opening capture device",
+        );
         let mut capture =
             videoio::VideoCapture::new(config.device_index, config.backend.to_opencv_api())
                 .map_err(|e| CaptureReadError::ReadFailed(e.to_string()))?;
@@ -91,6 +99,7 @@ impl OpenCvCaptureDevice {
         let _ = capture.set(videoio::CAP_PROP_FRAME_HEIGHT, config.height as f64);
         let _ = capture.set(videoio::CAP_PROP_FPS, config.fps as f64);
         let _ = capture.set(videoio::CAP_PROP_BUFFERSIZE, 1.0);
+        tracing::info!("capture device opened");
 
         Ok(Self {
             capture,

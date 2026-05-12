@@ -14,11 +14,27 @@ impl MangaOcrEngine {
         let requested_path: PathBuf = model_dir.as_ref().to_path_buf();
         let fallback_path = default_model_dir().to_path_buf();
         let mut errors = Vec::new();
+        tracing::info!(
+            requested_path = %requested_path.display(),
+            fallback_path = %fallback_path.display(),
+            "initializing Manga OCR engine",
+        );
 
         for candidate in candidate_model_dirs(&requested_path, &fallback_path) {
+            tracing::debug!(model_dir = %candidate.display(), "attempting Manga OCR model directory");
             match MangaOcr::new(&candidate) {
-                Ok(inner) => return Ok(Self { inner }),
-                Err(e) => errors.push(format!("{}: {e}", candidate.display())),
+                Ok(inner) => {
+                    tracing::info!(model_dir = %candidate.display(), "Manga OCR engine initialized");
+                    return Ok(Self { inner });
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        model_dir = %candidate.display(),
+                        error = %e,
+                        "failed to initialize Manga OCR model directory",
+                    );
+                    errors.push(format!("{}: {e}", candidate.display()));
+                }
             }
         }
 

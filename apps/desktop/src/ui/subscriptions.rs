@@ -23,13 +23,16 @@ pub fn init_runtime(
     let _ = COMMAND_SENDER.set(command_sender);
     let _ = PREVIEW_RECEIVER.set(preview);
     let _ = EVENT_RECEIVER.set(event);
+    tracing::info!("runtime subscriptions initialized");
 }
 
 pub async fn send_command(command: RuntimeCommand) -> Result<(), String> {
     let Some(sender) = COMMAND_SENDER.get().cloned() else {
+        tracing::error!("runtime command sender is not initialized");
         return Err("runtime command sender is not initialized".to_string());
     };
 
+    tracing::debug!(?command, "sending runtime command");
     sender
         .send(command)
         .await
