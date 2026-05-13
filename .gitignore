@@ -35,8 +35,6 @@ capture.png
 !/cache/.gitkeep
 
 # Resources (large binary assets populated at runtime)
-/resources/master_data/*
-!/resources/master_data/.gitkeep
 /resources/models/*
 !/resources/models/.gitkeep
 /resources/pokemon_images/*
