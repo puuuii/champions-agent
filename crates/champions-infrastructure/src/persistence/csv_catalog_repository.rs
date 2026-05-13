@@ -1,3 +1,4 @@
+use crate::usage_id_mapping::resolve_master_pokemon_id;
 use champions_application::errors::CatalogError;
 use champions_application::ports::CatalogRepository;
 use champions_domain::catalog::{BattleMasterData, MoveData, NatureData};
@@ -91,8 +92,11 @@ impl CsvCatalogRepository {
         master_data_dir: &Path,
         usage_json_path: Option<&Path>,
     ) -> Result<NameIndex, CatalogError> {
-        let mut index =
-            Self::load_name_index_csv_optional(&master_data_dir.join("pokemon_names.csv"))?;
+        let mut index = if master_data_dir.join("pokemon_names.csv").exists() {
+            Self::load_name_index_csv_optional(&master_data_dir.join("pokemon_names.csv"))?
+        } else {
+            Self::load_name_index_csv_optional(&master_data_dir.join("pokemon_species_names.csv"))?
+        };
         let default_path = master_data_dir.join("usage.json");
         let path = usage_json_path.unwrap_or(&default_path);
         if !path.exists() {
@@ -110,7 +114,7 @@ impl CsvCatalogRepository {
                     continue;
                 };
                 if !index.ids.contains_key(&name)
-                    && let Some(id) = pokemon["id"].as_str().and_then(|value| value.parse().ok())
+                    && let Some(id) = Self::usage_entry_pokemon_id(pokemon, &name)
                 {
                     index.ids.insert(name.clone(), id);
                 }
@@ -120,6 +124,22 @@ impl CsvCatalogRepository {
         index.names.sort();
         index.names.dedup();
         Ok(index)
+    }
+
+    fn usage_entry_pokemon_id(pokemon: &serde_json::Value, name: &str) -> Option<u32> {
+        pokemon["pokemon_id"]
+            .as_u64()
+            .map(|id| id as u32)
+            .or_else(|| {
+                pokemon["pokemon_id"]
+                    .as_str()
+                    .and_then(|value| value.parse::<u32>().ok())
+            })
+            .or_else(|| {
+                pokemon["id"]
+                    .as_str()
+                    .and_then(|value| resolve_master_pokemon_id(value, name))
+            })
     }
 
     fn load_names_csv(path: &Path) -> Result<Vec<String>, CatalogError> {

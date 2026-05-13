@@ -1312,7 +1312,7 @@ mod tests {
 
     fn sample_usage(name: &str) -> PokemonUsageSummary {
         PokemonUsageSummary {
-            id: name.to_string(),
+            pokemon_id: 25,
             name: name.to_string(),
             types: vec!["でんき".to_string()],
             moves: vec![MoveUsage {

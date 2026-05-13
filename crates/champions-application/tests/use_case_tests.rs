@@ -171,6 +171,26 @@ impl FakeUsageRepository {
 }
 
 impl UsageRepository for FakeUsageRepository {
+    fn find_by_pokemon_id(
+        &self,
+        pokemon_id: u32,
+    ) -> Result<Option<PokemonUsageSummary>, UsageError> {
+        let read = self.data.read().unwrap();
+        Ok(read.iter().find(|u| u.pokemon_id == pokemon_id).cloned())
+    }
+
+    fn find_many_by_pokemon_ids(
+        &self,
+        pokemon_ids: &[u32],
+    ) -> Result<Vec<PokemonUsageSummary>, UsageError> {
+        let read = self.data.read().unwrap();
+        Ok(read
+            .iter()
+            .filter(|u| pokemon_ids.contains(&u.pokemon_id))
+            .cloned()
+            .collect())
+    }
+
     fn find_by_pokemon_name(&self, name: &str) -> Result<Option<PokemonUsageSummary>, UsageError> {
         let read = self.data.read().unwrap();
         Ok(read.iter().find(|u| u.name == name).cloned())
@@ -270,9 +290,9 @@ fn fixture_master_data() -> BattleMasterData {
     }
 }
 
-fn sample_usage(name: &str) -> PokemonUsageSummary {
+fn sample_usage(pokemon_id: u32, name: &str) -> PokemonUsageSummary {
     PokemonUsageSummary {
-        id: name.to_string(),
+        pokemon_id,
         name: name.to_string(),
         types: vec!["でんき".to_string()],
         moves: vec![MoveUsage {
@@ -505,7 +525,7 @@ fn calculate_damage_returns_error_for_missing_pokemon() {
 
 #[test]
 fn refresh_usage_fetches_and_stores() {
-    let fetched = vec![sample_usage("ピカチュウ"), sample_usage("リザードン")];
+    let fetched = vec![sample_usage(25, "ピカチュウ"), sample_usage(6, "リザードン")];
     let fetcher = FakeUsageFetcher::new(fetched);
     let repo = FakeUsageRepository::empty();
     let uc = RefreshUsageDataUseCase::new(&fetcher, &repo);
@@ -526,8 +546,9 @@ fn refresh_usage_fetches_and_stores() {
 
 #[test]
 fn get_pokemon_usage_returns_data() {
-    let repo = FakeUsageRepository::new(vec![sample_usage("ピカチュウ")]);
-    let uc = GetPokemonUsageUseCase::new(&repo);
+    let catalog = FakeCatalogRepository::with_species(vec!["ピカチュウ"]);
+    let repo = FakeUsageRepository::new(vec![sample_usage(1, "ピカチュウ")]);
+    let uc = GetPokemonUsageUseCase::new(&catalog, &repo);
 
     let result = uc
         .execute(GetPokemonUsageQuery {
@@ -541,8 +562,9 @@ fn get_pokemon_usage_returns_data() {
 
 #[test]
 fn get_pokemon_usage_returns_none_when_not_found() {
+    let catalog = FakeCatalogRepository::with_species(vec!["ピカチュウ"]);
     let repo = FakeUsageRepository::empty();
-    let uc = GetPokemonUsageUseCase::new(&repo);
+    let uc = GetPokemonUsageUseCase::new(&catalog, &repo);
 
     let result = uc
         .execute(GetPokemonUsageQuery {
@@ -629,7 +651,7 @@ fn detect_battle_result_phase_rejects_other_text() {
 fn build_selection_support_calculates_speed_and_two_hit_ko() {
     let catalog = FakeCatalogRepository::with_species(vec!["アタッカー", "タンク"]);
     let repo = FakeUsageRepository::new(vec![PokemonUsageSummary {
-        id: "2".to_string(),
+        pokemon_id: 2,
         name: "タンク".to_string(),
         types: vec!["じめん".to_string()],
         moves: vec![MoveUsage {
@@ -705,10 +727,74 @@ fn build_selection_support_calculates_speed_and_two_hit_ko() {
 }
 
 #[test]
+fn build_selection_support_uses_usage_pokemon_id_when_catalog_name_lookup_fails() {
+    let catalog = FakeCatalogRepository::with_species(vec!["アタッカー"]);
+    let repo = FakeUsageRepository::new(vec![PokemonUsageSummary {
+        pokemon_id: 2,
+        name: "タンク(別フォーム)".to_string(),
+        types: vec!["じめん".to_string()],
+        moves: vec![MoveUsage {
+            name: "10まんボルト".to_string(),
+            rate: "100%".to_string(),
+        }],
+        items: vec![],
+        abilities: vec![],
+        effort_values: vec![EffortValueUsage {
+            h: 0,
+            a: 0,
+            b: 0,
+            c: 0,
+            d: 0,
+            s: 0,
+            rate: "100%".to_string(),
+        }],
+        natures: vec![NatureUsage {
+            name: "ひかえめ".to_string(),
+            rate: "100%".to_string(),
+        }],
+    }]);
+    let uc = BuildSelectionSupportUseCase::new(&catalog, &repo);
+
+    let result = uc
+        .execute(BuildSelectionSupportQuery {
+            my_party: vec![PokemonBuild {
+                species_name: "アタッカー".to_string(),
+                effort_values: EffortValueSpread {
+                    h: 175,
+                    a: 150,
+                    b: 100,
+                    c: 80,
+                    d: 90,
+                    s: 130,
+                },
+                moves: MoveSet {
+                    moves: [
+                        "10まんボルト".to_string(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                    ],
+                },
+                ..Default::default()
+            }],
+            opponents: vec![OpponentSelectionInput {
+                slot_index: 0,
+                name: "タンク(別フォーム)".to_string(),
+            }],
+        })
+        .unwrap();
+
+    let opponent = &result.opponents[0];
+    assert!(opponent.note.is_none());
+    assert!(opponent.assumption.is_some());
+    assert_eq!(opponent.assumption.as_ref().unwrap().stats, [175, 100, 140, 80, 100, 80]);
+}
+
+#[test]
 fn build_selection_support_uses_usage_distribution_points_for_opponent_stats() {
     let catalog = FakeCatalogRepository::with_species(vec!["アタッカー", "タンク"]);
     let repo = FakeUsageRepository::new(vec![PokemonUsageSummary {
-        id: "2".to_string(),
+        pokemon_id: 2,
         name: "タンク".to_string(),
         types: vec!["じめん".to_string()],
         moves: vec![MoveUsage {
@@ -794,7 +880,7 @@ fn build_selection_support_applies_nature_without_catalog_nature_id() {
     let mut catalog = FakeCatalogRepository::with_species(vec!["アタッカー", "タンク"]);
     catalog.nature_ids.clear();
     let repo = FakeUsageRepository::new(vec![PokemonUsageSummary {
-        id: "2".to_string(),
+        pokemon_id: 2,
         name: "タンク".to_string(),
         types: vec!["じめん".to_string()],
         moves: vec![MoveUsage {

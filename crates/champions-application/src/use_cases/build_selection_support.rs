@@ -146,18 +146,7 @@ impl<'a> BuildSelectionSupportUseCase<'a> {
                 continue;
             };
 
-            let Some(opponent_species_id) =
-                self.catalog_repo.find_species_id_by_name(&opponent_name)?
-            else {
-                opponents.push(OpponentSelectionSupport {
-                    slot_index: opponent.slot_index,
-                    opponent_name,
-                    assumption: None,
-                    matchups: Vec::new(),
-                    note: Some("種族値の参照に必要なポケモンIDを解決できません".to_string()),
-                });
-                continue;
-            };
+            let opponent_species_id = usage.pokemon_id;
 
             let assumed_distribution = top_effort_values(usage);
             let assumed_nature_name = top_nature_name(usage);

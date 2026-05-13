@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PokemonUsageSummary {
-    pub id: String,
+    pub pokemon_id: u32,
     pub name: String,
     pub types: Vec<String>,
     pub moves: Vec<MoveUsage>,

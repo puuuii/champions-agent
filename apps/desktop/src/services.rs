@@ -121,7 +121,7 @@ impl DesktopAppServices {
             return None;
         }
 
-        GetPokemonUsageUseCase::new(self.usage_repo.as_ref())
+        GetPokemonUsageUseCase::new(self.catalog_repo.as_ref(), self.usage_repo.as_ref())
             .execute(GetPokemonUsageQuery {
                 name: name.to_string(),
             })

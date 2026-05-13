@@ -1,3 +1,4 @@
+use crate::usage_id_mapping::resolve_master_pokemon_id;
 use champions_application::errors::UsageFetchError;
 use champions_application::ports::{UsageFetcher, UsageSource};
 use champions_domain::usage::{
@@ -89,15 +90,23 @@ fn js_to_json(js: &str) -> String {
 
 fn build_pokemon_list(raw: IndexMap<String, Value>) -> Vec<PokemonUsageSummary> {
     raw.into_iter()
-        .map(|(gamewith_poke_id, p)| PokemonUsageSummary {
-            id: gamewith_poke_id,
-            name: str_field(&p, "name"),
-            types: str_array(&p["types"]),
-            moves: parse_moves(&p["moves"]),
-            items: parse_items(&p["items"]),
-            abilities: parse_abilities(&p["abilities"]),
-            effort_values: parse_evs(&p["evDistributions"]),
-            natures: parse_natures(&p["natures"]),
+        .filter_map(|(gamewith_poke_id, p)| {
+            let name = str_field(&p, "name");
+            let Some(pokemon_id) = resolve_master_pokemon_id(&gamewith_poke_id, &name) else {
+                tracing::warn!(gamewith_id = %gamewith_poke_id, %name, "failed to resolve GameWith Pokémon ID to master pokemon_id");
+                return None;
+            };
+
+            Some(PokemonUsageSummary {
+                pokemon_id,
+                name,
+                types: str_array(&p["types"]),
+                moves: parse_moves(&p["moves"]),
+                items: parse_items(&p["items"]),
+                abilities: parse_abilities(&p["abilities"]),
+                effort_values: parse_evs(&p["evDistributions"]),
+                natures: parse_natures(&p["natures"]),
+            })
         })
         .collect()
 }

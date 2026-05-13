@@ -21,7 +21,9 @@ pub use detect_battle_result_phase::{
     DetectBattleResultPhaseCommand, DetectBattleResultPhaseUseCase,
 };
 pub use detect_selection_screen::{DetectSelectionScreenCommand, DetectSelectionScreenUseCase};
-pub use get_pokemon_usage::{GetPokemonUsageQuery, GetPokemonUsageResult, GetPokemonUsageUseCase};
+pub use get_pokemon_usage::{
+    GetPokemonUsageError, GetPokemonUsageQuery, GetPokemonUsageResult, GetPokemonUsageUseCase,
+};
 pub use identify_opponent_party::{
     IdentifyOpponentPartyCommand, IdentifyOpponentPartyError, IdentifyOpponentPartyUseCase,
     OpponentPartyIdentificationResult,
