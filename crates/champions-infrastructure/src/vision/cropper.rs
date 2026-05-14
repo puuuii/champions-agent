@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use champions_application::{OcrImage, PartyImageSet, RecognitionImageExtractor, SlotImage};
 use champions_domain::recognition::SelectionSlot;
-use image::RgbImage;
+use image::{Rgb, RgbImage};
 
 #[derive(Debug, Clone)]
 pub struct CropConfig {
@@ -145,6 +145,130 @@ impl OpenCvCropper {
         }
     }
 
+    fn ensure_debug_output_dir(&self) -> Option<&'static Path> {
+        if !self.save_debug_party_slots {
+            return None;
+        }
+
+        let output_dir = Path::new("tmp");
+        if let Err(error) = fs::create_dir_all(output_dir) {
+            tracing::warn!(
+                path = %output_dir.display(),
+                %error,
+                "failed to create opponent crop debug directory",
+            );
+            return None;
+        }
+
+        Some(output_dir)
+    }
+
+    fn build_debug_frame_image(
+        &self,
+        frame_width: u32,
+        frame_height: u32,
+        frame_bytes: &[u8],
+        channels: usize,
+    ) -> Option<RgbImage> {
+        let mut rgb_bytes = Vec::with_capacity((frame_width * frame_height * 3) as usize);
+        let stride = frame_width as usize * channels;
+
+        for row in 0..frame_height as usize {
+            for col in 0..frame_width as usize {
+                let offset = row * stride + col * channels;
+
+                if channels >= 3 && offset + 2 < frame_bytes.len() {
+                    rgb_bytes.push(frame_bytes[offset + 2]);
+                    rgb_bytes.push(frame_bytes[offset + 1]);
+                    rgb_bytes.push(frame_bytes[offset]);
+                } else if channels == 1 && offset < frame_bytes.len() {
+                    let g = frame_bytes[offset];
+                    rgb_bytes.push(g);
+                    rgb_bytes.push(g);
+                    rgb_bytes.push(g);
+                } else {
+                    rgb_bytes.push(0);
+                    rgb_bytes.push(0);
+                    rgb_bytes.push(0);
+                }
+            }
+        }
+
+        RgbImage::from_raw(frame_width, frame_height, rgb_bytes)
+    }
+
+    fn draw_rect_outline(image: &mut RgbImage, rect: CropRect, color: Rgb<u8>) {
+        if image.width() == 0 || image.height() == 0 || rect.width == 0 || rect.height == 0 {
+            return;
+        }
+
+        let max_x = image.width() - 1;
+        let max_y = image.height() - 1;
+        let x1 = rect.x.min(max_x);
+        let y1 = rect.y.min(max_y);
+        let x2 = rect.x.saturating_add(rect.width.saturating_sub(1)).min(max_x);
+        let y2 = rect.y.saturating_add(rect.height.saturating_sub(1)).min(max_y);
+
+        for x in x1..=x2 {
+            image.put_pixel(x, y1, color);
+            image.put_pixel(x, y2, color);
+        }
+
+        for y in y1..=y2 {
+            image.put_pixel(x1, y, color);
+            image.put_pixel(x2, y, color);
+        }
+    }
+
+    fn save_full_frame_debug_image(
+        &self,
+        frame_width: u32,
+        frame_height: u32,
+        frame_bytes: &[u8],
+        channels: usize,
+        rects: &[CropRect],
+    ) {
+        let Some(output_dir) = self.ensure_debug_output_dir() else {
+            return;
+        };
+
+        let Some(image) = self.build_debug_frame_image(frame_width, frame_height, frame_bytes, channels)
+        else {
+            tracing::warn!(
+                frame_width,
+                frame_height,
+                channels,
+                bytes = frame_bytes.len(),
+                "failed to build opponent full-frame debug image",
+            );
+            return;
+        };
+
+        let full_path = output_dir.join("opp_full_frame.png");
+        if let Err(error) = image.save(&full_path) {
+            tracing::warn!(
+                path = %full_path.display(),
+                %error,
+                "failed to save opponent full-frame debug image",
+            );
+            return;
+        }
+
+        let mut overlay = image.clone();
+        for rect in rects {
+            Self::draw_rect_outline(&mut overlay, *rect, Rgb([255, 0, 0]));
+        }
+
+        let overlay_path = output_dir.join("opp_full_frame_overlay.png");
+        if let Err(error) = overlay.save(&overlay_path) {
+            tracing::warn!(
+                path = %overlay_path.display(),
+                %error,
+                "failed to save opponent overlay debug image",
+            );
+        }
+    }
+
     fn save_party_slot_debug_image(
         &self,
         slot_index: usize,
@@ -152,20 +276,9 @@ impl OpenCvCropper {
         height: u32,
         rgb_bytes: &[u8],
     ) {
-        if !self.save_debug_party_slots {
+        let Some(output_dir) = self.ensure_debug_output_dir() else {
             return;
-        }
-
-        let output_dir = Path::new("tmp");
-        if let Err(error) = fs::create_dir_all(output_dir) {
-            tracing::warn!(
-                slot = slot_index + 1,
-                path = %output_dir.display(),
-                %error,
-                "failed to create opponent crop debug directory",
-            );
-            return;
-        }
+        };
 
         let Some(image) = RgbImage::from_raw(width, height, rgb_bytes.to_vec()) else {
             tracing::warn!(
@@ -286,6 +399,7 @@ impl RecognitionImageExtractor for OpenCvCropper {
     ) -> PartyImageSet {
         let channels = self.detect_channels(frame_width, frame_height, frame_bytes);
         let mut slots = Vec::with_capacity(6);
+        let mut rects = Vec::with_capacity(6);
 
         for i in 0..6u8 {
             let slot_index = i as usize;
@@ -298,6 +412,7 @@ impl RecognitionImageExtractor for OpenCvCropper {
                 continue;
             };
 
+            rects.push(rect);
             self.log_party_slot_debug(slot_index, frame_width, frame_height, rect);
 
             if let Some((rgb_bytes, w, h)) = self.crop_region(
@@ -317,6 +432,8 @@ impl RecognitionImageExtractor for OpenCvCropper {
                 });
             }
         }
+
+        self.save_full_frame_debug_image(frame_width, frame_height, frame_bytes, channels, &rects);
 
         PartyImageSet { slots }
     }
