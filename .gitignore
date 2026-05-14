@@ -39,3 +39,4 @@ capture.png
 !/resources/models/.gitkeep
 /resources/pokemon_images/*
 !/resources/pokemon_images/.gitkeep
+tmp/
