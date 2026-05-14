@@ -166,23 +166,24 @@ impl OpenCvCaptureDevice {
         let cols = frame_buf.cols() as u32;
         let channels = frame_buf.channels() as usize;
         let is_continuous = frame_buf.is_continuous();
-        let row_stride_bytes = frame_buf
-            .step(0)
-            .map_err(|e| CaptureReadError::ReadFailed(format!("failed to read Mat step: {e}")))?;
         let row_stride_elements = frame_buf
             .step1(0)
             .map_err(|e| CaptureReadError::ReadFailed(format!("failed to read Mat step1: {e}")))?;
+        let row_stride_bytes = row_stride_elements * frame_buf.elem_size1();
 
         let expected_len = (rows as usize) * (cols as usize) * channels;
-        let data = frame_buf
-            .data_bytes()
-            .map_err(|e| CaptureReadError::ReadFailed(format!("failed to access Mat data: {e}")))?;
+        let bytes: Arc<[u8]> = {
+            let data = frame_buf
+                .data_bytes()
+                .map_err(|e| CaptureReadError::ReadFailed(format!("failed to access Mat data: {e}")))?;
 
-        if data.len() < expected_len {
-            return Err(CaptureReadError::ReadFailed(
-                "Mat data size mismatch".to_string(),
-            ));
-        }
+            if data.len() < expected_len {
+                return Err(CaptureReadError::ReadFailed(
+                    "Mat data size mismatch".to_string(),
+                ));
+            }
+            data[..expected_len].into()
+        };
 
         self.debug_dump_capture_frame(
             rows,
@@ -192,7 +193,7 @@ impl OpenCvCaptureDevice {
             row_stride_bytes,
             row_stride_elements,
             expected_len,
-            data,
+            &bytes,
         );
 
         let now_millis = SystemTime::now()
@@ -206,7 +207,7 @@ impl OpenCvCaptureDevice {
                 width: cols,
                 height: rows,
                 pixel_format,
-                bytes: data[..expected_len].into(),
+                bytes,
             },
         }))
     }
