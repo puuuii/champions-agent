@@ -128,12 +128,16 @@ impl RuntimeBootstrap {
         debug_mode: bool,
     ) -> Result<()> {
         let _span = tracing::info_span!("runtime_bootstrap").entered();
-        let capture_config = CaptureConfig::default();
+        let capture_config = CaptureConfig {
+            debug_mode,
+            ..CaptureConfig::default()
+        };
         tracing::info!(
             device_index = capture_config.device_index,
             width = capture_config.width,
             height = capture_config.height,
             fps = capture_config.fps,
+            debug_mode = capture_config.debug_mode,
             "starting runtime bootstrap",
         );
         let frame_source = OpenCvFrameSource::open(&capture_config)?;
