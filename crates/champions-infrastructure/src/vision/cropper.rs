@@ -1,5 +1,8 @@
+use std::{fs, path::Path};
+
 use champions_application::{OcrImage, PartyImageSet, RecognitionImageExtractor, SlotImage};
 use champions_domain::recognition::SelectionSlot;
+use image::RgbImage;
 
 #[derive(Debug, Clone)]
 pub struct CropConfig {
@@ -14,10 +17,15 @@ pub struct OpenCvCropper {
     opponent_config: CropConfig,
     ocr_config: CropConfig,
     battle_result_config: CropConfig,
+    save_debug_party_slots: bool,
 }
 
 impl OpenCvCropper {
     pub fn new() -> Self {
+        Self::with_debug_party_slot_dump(false)
+    }
+
+    pub fn with_debug_party_slot_dump(save_debug_party_slots: bool) -> Self {
         Self {
             opponent_config: CropConfig {
                 center_x: 0.87,
@@ -41,6 +49,7 @@ impl OpenCvCropper {
                 size_w: 0.13,
                 width_ratio: 6.0,
             },
+            save_debug_party_slots,
         }
     }
 
@@ -108,6 +117,50 @@ impl OpenCvCropper {
             3
         } else {
             1
+        }
+    }
+
+    fn save_party_slot_debug_image(
+        &self,
+        slot_index: usize,
+        width: u32,
+        height: u32,
+        rgb_bytes: &[u8],
+    ) {
+        if !self.save_debug_party_slots {
+            return;
+        }
+
+        let output_dir = Path::new("tmp");
+        if let Err(error) = fs::create_dir_all(output_dir) {
+            tracing::warn!(
+                slot = slot_index + 1,
+                path = %output_dir.display(),
+                %error,
+                "failed to create opponent crop debug directory",
+            );
+            return;
+        }
+
+        let Some(image) = RgbImage::from_raw(width, height, rgb_bytes.to_vec()) else {
+            tracing::warn!(
+                slot = slot_index + 1,
+                width,
+                height,
+                bytes = rgb_bytes.len(),
+                "failed to build opponent crop debug image",
+            );
+            return;
+        };
+
+        let path = output_dir.join(format!("opp_poke{}.png", slot_index + 1));
+        if let Err(error) = image.save(&path) {
+            tracing::warn!(
+                slot = slot_index + 1,
+                path = %path.display(),
+                %error,
+                "failed to save opponent crop debug image",
+            );
         }
     }
 }
@@ -195,6 +248,7 @@ impl RecognitionImageExtractor for OpenCvCropper {
                 &self.opponent_config,
                 i as usize,
             ) {
+                self.save_party_slot_debug_image(i as usize, w, h, &rgb_bytes);
                 slots.push(SlotImage {
                     slot: SelectionSlot(i),
                     width: w,

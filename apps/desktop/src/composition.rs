@@ -18,8 +18,8 @@ use champions_runtime::{
 };
 use std::sync::Arc;
 
-pub fn run() -> iced::Result {
-    DesktopComposition::compose()
+pub fn run(debug_mode: bool) -> iced::Result {
+    DesktopComposition::compose(debug_mode)
         .expect("failed to compose desktop app")
         .run()
 }
@@ -29,7 +29,7 @@ struct DesktopComposition {
 }
 
 impl DesktopComposition {
-    fn compose() -> Result<Self> {
+    fn compose(debug_mode: bool) -> Result<Self> {
         let project_root = std::env::current_dir()?;
         let app_paths = AppPaths::from_project_root(&project_root);
         app_paths.ensure_writable_dirs()?;
@@ -48,7 +48,7 @@ impl DesktopComposition {
         );
 
         let repositories = DesktopRepositories::load(&app_paths)?;
-        RuntimeBootstrap::start(&app_paths, repositories.usage_repo.clone())?;
+        RuntimeBootstrap::start(&app_paths, repositories.usage_repo.clone(), debug_mode)?;
 
         Ok(Self {
             app_services: DesktopAppServices::new(
@@ -122,7 +122,11 @@ impl DesktopRepositories {
 struct RuntimeBootstrap;
 
 impl RuntimeBootstrap {
-    fn start(app_paths: &AppPaths, usage_repo: Arc<dyn UsageRepository>) -> Result<()> {
+    fn start(
+        app_paths: &AppPaths,
+        usage_repo: Arc<dyn UsageRepository>,
+        debug_mode: bool,
+    ) -> Result<()> {
         let _span = tracing::info_span!("runtime_bootstrap").entered();
         let capture_config = CaptureConfig::default();
         tracing::info!(
@@ -141,7 +145,7 @@ impl RuntimeBootstrap {
             .preview_max_width(1920)
             .preview_target_fps(60);
 
-        if let Some(recognition_port) = build_recognition_port(app_paths, usage_repo) {
+        if let Some(recognition_port) = build_recognition_port(app_paths, usage_repo, debug_mode) {
             builder = builder.recognition_port(recognition_port);
         } else {
             tracing::warn!("recognition runtime disabled because model initialization failed");
@@ -165,6 +169,7 @@ impl RuntimeBootstrap {
 fn build_recognition_port(
     app_paths: &AppPaths,
     usage_repo: Arc<dyn UsageRepository>,
+    debug_mode: bool,
 ) -> Option<Box<dyn RecognitionPort>> {
     let onnx_path = app_paths.model_dir.join("dinov2_vits14.onnx");
     let ocr_model_dir = app_paths.model_dir.join("manga-ocr");
@@ -174,6 +179,7 @@ fn build_recognition_port(
         onnx_path = %onnx_path.display(),
         ocr_model_dir = %ocr_model_dir.display(),
         master_img_dir = %master_img_dir.display(),
+        debug_mode,
     )
     .entered();
 
@@ -196,7 +202,7 @@ fn build_recognition_port(
         }
     };
 
-    let cropper = OpenCvCropper::new();
+    let cropper = OpenCvCropper::with_debug_party_slot_dump(debug_mode);
     tracing::info!("recognition runtime initialized");
 
     Some(Box::new(RecognitionRuntimePort::new(
