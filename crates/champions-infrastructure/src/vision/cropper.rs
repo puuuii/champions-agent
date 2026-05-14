@@ -13,6 +13,14 @@ pub struct CropConfig {
     pub width_ratio: f64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CropRect {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
 pub struct OpenCvCropper {
     opponent_config: CropConfig,
     ocr_config: CropConfig,
@@ -53,15 +61,13 @@ impl OpenCvCropper {
         }
     }
 
-    fn crop_region(
+    fn compute_crop_rect(
         &self,
         frame_width: u32,
         frame_height: u32,
-        frame_bytes: &[u8],
-        channels: usize,
         config: &CropConfig,
         index: usize,
-    ) -> Option<(Vec<u8>, u32, u32)> {
+    ) -> Option<CropRect> {
         let w = frame_width as f64;
         let h = frame_height as f64;
 
@@ -79,13 +85,32 @@ impl OpenCvCropper {
             return None;
         }
 
-        let stride = frame_width as usize * channels;
-        let mut rgb_bytes = Vec::with_capacity((crop_w * crop_h * 3) as usize);
+        Some(CropRect {
+            x: x1,
+            y: y1,
+            width: crop_w,
+            height: crop_h,
+        })
+    }
 
-        for row in 0..crop_h {
-            let src_y = (y1 + row) as usize;
-            for col in 0..crop_w {
-                let src_x = (x1 + col) as usize;
+    fn crop_region(
+        &self,
+        frame_width: u32,
+        frame_height: u32,
+        frame_bytes: &[u8],
+        channels: usize,
+        config: &CropConfig,
+        index: usize,
+    ) -> Option<(Vec<u8>, u32, u32)> {
+        let rect = self.compute_crop_rect(frame_width, frame_height, config, index)?;
+
+        let stride = frame_width as usize * channels;
+        let mut rgb_bytes = Vec::with_capacity((rect.width * rect.height * 3) as usize);
+
+        for row in 0..rect.height {
+            let src_y = (rect.y + row) as usize;
+            for col in 0..rect.width {
+                let src_x = (rect.x + col) as usize;
                 let offset = src_y * stride + src_x * channels;
 
                 if channels >= 3 && offset + 2 < frame_bytes.len() {
@@ -102,7 +127,7 @@ impl OpenCvCropper {
             }
         }
 
-        Some((rgb_bytes, crop_w, crop_h))
+        Some((rgb_bytes, rect.width, rect.height))
     }
 
     fn detect_channels(&self, frame_width: u32, frame_height: u32, frame_bytes: &[u8]) -> usize {
@@ -162,6 +187,29 @@ impl OpenCvCropper {
                 "failed to save opponent crop debug image",
             );
         }
+    }
+
+    fn log_party_slot_debug(
+        &self,
+        slot_index: usize,
+        frame_width: u32,
+        frame_height: u32,
+        rect: CropRect,
+    ) {
+        if !self.save_debug_party_slots {
+            return;
+        }
+
+        tracing::info!(
+            slot = slot_index + 1,
+            frame_width,
+            frame_height,
+            x1 = rect.x,
+            y1 = rect.y,
+            crop_width = rect.width,
+            crop_height = rect.height,
+            "opponent crop debug",
+        );
     }
 }
 
@@ -240,15 +288,27 @@ impl RecognitionImageExtractor for OpenCvCropper {
         let mut slots = Vec::with_capacity(6);
 
         for i in 0..6u8 {
+            let slot_index = i as usize;
+            let Some(rect) = self.compute_crop_rect(
+                frame_width,
+                frame_height,
+                &self.opponent_config,
+                slot_index,
+            ) else {
+                continue;
+            };
+
+            self.log_party_slot_debug(slot_index, frame_width, frame_height, rect);
+
             if let Some((rgb_bytes, w, h)) = self.crop_region(
                 frame_width,
                 frame_height,
                 frame_bytes,
                 channels,
                 &self.opponent_config,
-                i as usize,
+                slot_index,
             ) {
-                self.save_party_slot_debug_image(i as usize, w, h, &rgb_bytes);
+                self.save_party_slot_debug_image(slot_index, w, h, &rgb_bytes);
                 slots.push(SlotImage {
                     slot: SelectionSlot(i),
                     width: w,
