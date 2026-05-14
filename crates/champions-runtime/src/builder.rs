@@ -140,15 +140,6 @@ pub struct RuntimeWorkers {
 }
 
 impl RuntimeWorkers {
-    #[tracing::instrument(
-        name = "runtime_workers",
-        skip(self),
-        fields(
-            preview_max_width = self.preview_max_width,
-            preview_target_fps = self.preview_target_fps,
-            has_recognition_worker = self.recognition_port.is_some()
-        )
-    )]
     pub async fn run(self) {
         let RuntimeWorkers {
             frame_source,
@@ -165,6 +156,13 @@ impl RuntimeWorkers {
             preview_target_fps,
         } = self;
         let has_recognition_worker = recognition_port.is_some();
+        let _span = tracing::info_span!(
+            "runtime_workers",
+            preview_max_width,
+            preview_target_fps,
+            has_recognition_worker,
+        )
+        .entered();
         tracing::info!("runtime workers starting");
 
         let control = Arc::new(RuntimeControl::new(preview_max_width, preview_target_fps));
@@ -880,11 +878,6 @@ fn next_match_phase(current_phase: MatchPhase) -> MatchPhase {
     }
 }
 
-#[tracing::instrument(
-    name = "runtime_command_loop",
-    skip_all,
-    fields(has_recognition_worker)
-)]
 async fn run_command_loop(
     command_rx: &mut mpsc::Receiver<RuntimeCommand>,
     event_tx: &mpsc::Sender<RuntimeEvent>,
@@ -893,6 +886,7 @@ async fn run_command_loop(
     event_seq: &EventSequencer,
     has_recognition_worker: bool,
 ) {
+    let _span = tracing::info_span!("runtime_command_loop", has_recognition_worker,).entered();
     tracing::info!("runtime command loop started");
     while let Some(command) = command_rx.recv().await {
         tracing::debug!(?command, "runtime command received");
