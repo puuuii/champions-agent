@@ -206,8 +206,14 @@ impl OpenCvCropper {
         let max_y = image.height() - 1;
         let x1 = rect.x.min(max_x);
         let y1 = rect.y.min(max_y);
-        let x2 = rect.x.saturating_add(rect.width.saturating_sub(1)).min(max_x);
-        let y2 = rect.y.saturating_add(rect.height.saturating_sub(1)).min(max_y);
+        let x2 = rect
+            .x
+            .saturating_add(rect.width.saturating_sub(1))
+            .min(max_x);
+        let y2 = rect
+            .y
+            .saturating_add(rect.height.saturating_sub(1))
+            .min(max_y);
 
         for x in x1..=x2 {
             image.put_pixel(x, y1, color);
@@ -232,7 +238,8 @@ impl OpenCvCropper {
             return;
         };
 
-        let Some(image) = self.build_debug_frame_image(frame_width, frame_height, frame_bytes, channels)
+        let Some(image) =
+            self.build_debug_frame_image(frame_width, frame_height, frame_bytes, channels)
         else {
             tracing::warn!(
                 frame_width,

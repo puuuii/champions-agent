@@ -224,7 +224,10 @@ mod tests {
         let path = dir.join("usage_test.json");
         let repo = JsonUsageRepository::new(path.clone());
 
-        let data = vec![sample_usage(25, "ピカチュウ"), sample_usage(6, "リザードン")];
+        let data = vec![
+            sample_usage(25, "ピカチュウ"),
+            sample_usage(6, "リザードン"),
+        ];
         repo.replace_all(data).unwrap();
 
         let found = repo.find_by_pokemon_name("ピカチュウ").unwrap();
@@ -233,7 +236,10 @@ mod tests {
         assert_eq!(found.unwrap().pokemon_id, 25);
 
         let found_by_id = repo.find_by_pokemon_id(6).unwrap();
-        assert_eq!(found_by_id.as_ref().map(|usage| usage.name.as_str()), Some("リザードン"));
+        assert_eq!(
+            found_by_id.as_ref().map(|usage| usage.name.as_str()),
+            Some("リザードン")
+        );
 
         let not_found = repo.find_by_pokemon_name("フシギダネ").unwrap();
         assert!(not_found.is_none());
@@ -297,8 +303,14 @@ mod tests {
         .unwrap();
 
         let repo = JsonUsageRepository::new(path.clone());
-        let rotom = repo.find_by_pokemon_name("ウォッシュロトム").unwrap().unwrap();
-        let floette = repo.find_by_pokemon_name("フラエッテ(永遠)").unwrap().unwrap();
+        let rotom = repo
+            .find_by_pokemon_name("ウォッシュロトム")
+            .unwrap()
+            .unwrap();
+        let floette = repo
+            .find_by_pokemon_name("フラエッテ(永遠)")
+            .unwrap()
+            .unwrap();
 
         assert_eq!(rotom.pokemon_id, 10009);
         assert_eq!(floette.pokemon_id, 10061);
