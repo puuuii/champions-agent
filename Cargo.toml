@@ -31,3 +31,6 @@ opt-level = 3
 
 [profile.dev.package."champions-agent-desktop"]
 opt-level = 2
+
+[patch.crates-io]
+manga-ocr-rs = { path = "patches/manga-ocr-rs" }
