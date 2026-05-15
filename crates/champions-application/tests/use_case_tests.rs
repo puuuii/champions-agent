@@ -578,8 +578,8 @@ fn get_pokemon_usage_returns_none_when_not_found() {
 // --- DetectSelectionScreenUseCase Tests ---
 
 #[test]
-fn detect_selection_screen_accepts_single_battle_header() {
-    let ocr = FakeOcrEngine::new("ランクマッチ\nシングル\nバトル");
+fn detect_selection_screen_accepts_text_with_three_hint_chars() {
+    let ocr = FakeOcrEngine::new("対戦準備\nシグバ");
     let uc = DetectSelectionScreenUseCase::new(&ocr);
 
     let result = uc
@@ -592,8 +592,8 @@ fn detect_selection_screen_accepts_single_battle_header() {
 }
 
 #[test]
-fn detect_selection_screen_rejects_text_without_single_battle_header() {
-    let ocr = FakeOcrEngine::new("ポケモンを選出してください");
+fn detect_selection_screen_rejects_text_with_only_two_hint_chars() {
+    let ocr = FakeOcrEngine::new("対戦準備\nシバ");
     let uc = DetectSelectionScreenUseCase::new(&ocr);
 
     let result = uc

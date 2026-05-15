@@ -1,8 +1,8 @@
 use crate::ports::ocr_engine::{OcrEngine, OcrError, OcrImage, SelectionDetectionResult};
 use champions_domain::recognition::ScreenState;
 
-const MODE_KEYWORDS: &[&str] = &["シングル"];
-const BATTLE_KEYWORDS: &[&str] = &["バトル"];
+const SELECTION_PHASE_HINT_CHARS: &[char] = &['シ', 'ン', 'グ', 'ル', 'ラ', 'ク', 'バ', 'ト'];
+const MIN_SELECTION_PHASE_HINT_MATCHES: usize = 3;
 
 pub struct DetectSelectionScreenCommand {
     pub target_text_image: OcrImage,
@@ -40,8 +40,11 @@ impl<'a> DetectSelectionScreenUseCase<'a> {
 
 fn is_selection_screen_text(raw_text: &str) -> bool {
     let normalized = normalize_ocr_text(raw_text);
-    MODE_KEYWORDS.iter().any(|kw| normalized.contains(kw))
-        && BATTLE_KEYWORDS.iter().any(|kw| normalized.contains(kw))
+    SELECTION_PHASE_HINT_CHARS
+        .iter()
+        .filter(|&&ch| normalized.contains(ch))
+        .count()
+        >= MIN_SELECTION_PHASE_HINT_MATCHES
 }
 
 fn normalize_ocr_text(raw_text: &str) -> String {
