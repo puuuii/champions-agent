@@ -233,7 +233,6 @@ fn build_recognition_port(
     let onnx_path = app_paths.model_dir.join("dinov2_vits14.onnx");
     let ocr_model_dir = app_paths.model_dir.join("manga-ocr");
     let master_img_dir = app_paths.pokemon_images_dir.clone();
-    let embedding_cache_path = app_paths.cache_dir.join("master_embeddings.json");
     let _span = tracing::info_span!(
         "build_recognition_port",
         onnx_path = %onnx_path.display(),
@@ -255,22 +254,21 @@ fn build_recognition_port(
     log_startup_profile(debug_mode, "recognition.ocr.init", ocr_started_at);
 
     let identifier_started_at = Instant::now();
-    let party_identifier =
-        match OnnxPartyIdentifier::new(&onnx_path, &master_img_dir, &embedding_cache_path) {
-            Ok(identifier) => identifier,
-            Err(error) => {
-                log_startup_profile(
-                    debug_mode,
-                    "recognition.party_identifier.init",
-                    identifier_started_at,
-                );
-                tracing::warn!(
-                    %error,
-                    "party identifier initialization failed; continuing without recognition",
-                );
-                return None;
-            }
-        };
+    let party_identifier = match OnnxPartyIdentifier::new(&onnx_path, &master_img_dir) {
+        Ok(identifier) => identifier,
+        Err(error) => {
+            log_startup_profile(
+                debug_mode,
+                "recognition.party_identifier.init",
+                identifier_started_at,
+            );
+            tracing::warn!(
+                %error,
+                "party identifier initialization failed; continuing without recognition",
+            );
+            return None;
+        }
+    };
     log_startup_profile(
         debug_mode,
         "recognition.party_identifier.init",
