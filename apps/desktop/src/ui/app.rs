@@ -1101,6 +1101,11 @@ impl PokeEditorApp {
                     container(text("性格").font(JAPANESE_FONT).size(16)).width(Length::Fixed(80.0))
                 ]
                 .spacing(10);
+                let mut winning_row = row![
+                    container(text("勝てる自ポケモン").font(JAPANESE_FONT).size(16))
+                        .width(Length::Fixed(80.0))
+                ]
+                .spacing(10);
 
                 for (index, pokemon) in party.pokemons.iter().enumerate() {
                     let usage = pokemon.usage.as_ref();
@@ -1222,24 +1227,6 @@ impl PokeEditorApp {
                     }
                     ev_row = ev_row.push(container(evs_col).width(Length::FillPortion(1)));
 
-                    let winning_summary = self
-                        .selection_support
-                        .as_ref()
-                        .and_then(|support| {
-                            support
-                                .opponents
-                                .iter()
-                                .find(|opponent| opponent.slot_index == pokemon.slot_index)
-                        })
-                        .map(format_opponent_winning_pokemon_summary)
-                        .unwrap_or_else(|| {
-                            if self.selection_support_status.is_some() {
-                                "勝てる自ポケモン: 算出不可".to_string()
-                            } else {
-                                "勝てる自ポケモン: 算出待ち".to_string()
-                            }
-                        });
-
                     let mut natures_col = column![].spacing(2);
                     if let Some(usage) = usage {
                         for n in usage.natures.iter().take(2) {
@@ -1253,13 +1240,34 @@ impl PokeEditorApp {
                         natures_col =
                             natures_col.push(text("使用率データなし").font(JAPANESE_FONT).size(12));
                     }
-                    natures_col = natures_col.push(
-                        text(winning_summary)
-                            .font(JAPANESE_FONT)
-                            .size(12),
-                    );
                     nature_row =
                         nature_row.push(container(natures_col).width(Length::FillPortion(1)));
+
+                    let winning_list = self
+                        .selection_support
+                        .as_ref()
+                        .and_then(|support| {
+                            support
+                                .opponents
+                                .iter()
+                                .find(|opponent| opponent.slot_index == pokemon.slot_index)
+                        })
+                        .map(format_opponent_winning_pokemon_list)
+                        .unwrap_or_else(|| {
+                            if self.selection_support_status.is_some() {
+                                "算出不可".to_string()
+                            } else {
+                                "算出待ち".to_string()
+                            }
+                        });
+                    winning_row = winning_row.push(
+                        container(
+                            text(winning_list)
+                                .font(JAPANESE_FONT)
+                                .size(12),
+                        )
+                        .width(Length::FillPortion(1)),
+                    );
                 }
 
                 let mut content = column![].spacing(20);
@@ -1279,8 +1287,16 @@ impl PokeEditorApp {
                     );
                 }
 
-                let table = column![name_row, move_row, item_row, ability_row, ev_row, nature_row]
-                    .spacing(20);
+                let table = column![
+                    name_row,
+                    move_row,
+                    item_row,
+                    ability_row,
+                    ev_row,
+                    nature_row,
+                    winning_row
+                ]
+                .spacing(20);
                 content = content.push(table);
 
                 scrollable(content).into()
@@ -1425,19 +1441,19 @@ fn format_conflict_summary(conflicts: &[ConflictView]) -> Option<String> {
     Some(format!("重複候補があります: {body}"))
 }
 
-fn format_opponent_winning_pokemon_summary(opponent: &OpponentSelectionSupport) -> String {
+fn format_opponent_winning_pokemon_list(opponent: &OpponentSelectionSupport) -> String {
     if opponent.matchups.is_empty() {
         if opponent.note.is_some() {
-            "勝てる自ポケモン: 算出不可".to_string()
+            "算出不可".to_string()
         } else {
-            "勝てる自ポケモン: 比較不可".to_string()
+            "比較不可".to_string()
         }
     } else {
-        format_winning_pokemon_summary(&opponent.matchups)
+        format_winning_pokemon_list(&opponent.matchups)
     }
 }
 
-fn format_winning_pokemon_summary(matchups: &[PokemonMatchupSupport]) -> String {
+fn format_winning_pokemon_list(matchups: &[PokemonMatchupSupport]) -> String {
     let winners = matchups
         .iter()
         .filter(|matchup| matches!(matchup.battle_outcome, Some(BattleOutcome::Win)))
@@ -1445,9 +1461,9 @@ fn format_winning_pokemon_summary(matchups: &[PokemonMatchupSupport]) -> String 
         .collect::<Vec<_>>();
 
     if winners.is_empty() {
-        "勝てる自ポケモン: なし".to_string()
+        "なし".to_string()
     } else {
-        format!("勝てる自ポケモン: {}", winners.join(" / "))
+        winners.join("\n")
     }
 }
 
