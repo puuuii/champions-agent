@@ -5,7 +5,7 @@ use super::pokemon::{
 use super::subscriptions::{self, RuntimeMessage};
 use crate::services::{DesktopAppServices, SuggestionKind};
 use champions_application::use_cases::{
-    AttackSupport, BuildSelectionSupportResult, KoSummary, OpponentAssumption,
+    AttackSupport, BattleOutcome, BuildSelectionSupportResult, KoSummary, OpponentAssumption,
     OpponentSelectionInput, OpponentSelectionSupport, PokemonMatchupSupport, SpeedComparison,
 };
 use champions_domain::party::{PokemonBuild, SavedParty};
@@ -1435,13 +1435,23 @@ fn format_conflict_summary(conflicts: &[ConflictView]) -> Option<String> {
 }
 
 fn selection_support_card<'a>(opponent: &'a OpponentSelectionSupport) -> Element<'a, Message> {
-    let header = text(format!(
-        "#{} {}",
-        opponent.slot_index + 1,
-        opponent.opponent_name
-    ))
-    .font(JAPANESE_FONT)
-    .size(22);
+    let header = row![
+        text(format!(
+            "#{} {}",
+            opponent.slot_index + 1,
+            opponent.opponent_name
+        ))
+        .font(JAPANESE_FONT)
+        .size(22),
+        container(
+            text(format_winning_pokemon_summary(&opponent.matchups))
+                .font(JAPANESE_FONT)
+                .size(13)
+        )
+        .width(Length::Fill),
+    ]
+    .spacing(12)
+    .align_y(iced::Alignment::Center);
 
     let mut content = column![header].spacing(10);
     if let Some(assumption) = &opponent.assumption {
@@ -1533,6 +1543,20 @@ fn format_opponent_assumption(assumption: &OpponentAssumption) -> String {
         format_effort_value_spread(&assumption.effort_values),
         format_actual_stats(&assumption.stats),
     )
+}
+
+fn format_winning_pokemon_summary(matchups: &[PokemonMatchupSupport]) -> String {
+    let winners = matchups
+        .iter()
+        .filter(|matchup| matches!(matchup.battle_outcome, Some(BattleOutcome::Win)))
+        .map(|matchup| format!("#{} {}", matchup.my_slot_index + 1, matchup.my_name))
+        .collect::<Vec<_>>();
+
+    if winners.is_empty() {
+        "勝てる自ポケモン: なし".to_string()
+    } else {
+        format!("勝てる自ポケモン: {}", winners.join(" / "))
+    }
 }
 
 fn format_effort_value_spread(values: &champions_domain::party::EffortValueSpread) -> String {

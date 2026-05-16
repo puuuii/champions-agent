@@ -10,7 +10,7 @@ mod save_party;
 mod suggest_names;
 
 pub use build_selection_support::{
-    AttackSupport, BuildSelectionSupportError, BuildSelectionSupportQuery,
+    AttackSupport, BattleOutcome, BuildSelectionSupportError, BuildSelectionSupportQuery,
     BuildSelectionSupportResult, BuildSelectionSupportUseCase, KoSummary, OpponentAssumption,
     OpponentSelectionInput, OpponentSelectionSupport, PokemonMatchupSupport, SpeedComparison,
 };

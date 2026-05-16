@@ -724,6 +724,69 @@ fn build_selection_support_calculates_speed_and_two_hit_ko() {
     }
 
     assert!(matchup.opponent_attack.is_some());
+    assert_eq!(matchup.battle_outcome, Some(BattleOutcome::Win));
+}
+
+#[test]
+fn build_selection_support_marks_speed_tie_same_turn_count_as_uncertain() {
+    let catalog = FakeCatalogRepository::with_species(vec!["アタッカー"]);
+    let repo = FakeUsageRepository::new(vec![PokemonUsageSummary {
+        pokemon_id: 1,
+        name: "アタッカー".to_string(),
+        types: vec!["でんき".to_string()],
+        moves: vec![MoveUsage {
+            name: "10まんボルト".to_string(),
+            rate: "100%".to_string(),
+        }],
+        items: vec![],
+        abilities: vec![],
+        effort_values: vec![EffortValueUsage {
+            h: 0,
+            a: 0,
+            b: 0,
+            c: 0,
+            d: 0,
+            s: 0,
+            rate: "100%".to_string(),
+        }],
+        natures: vec![NatureUsage {
+            name: "ひかえめ".to_string(),
+            rate: "100%".to_string(),
+        }],
+    }]);
+    let uc = BuildSelectionSupportUseCase::new(&catalog, &repo);
+
+    let result = uc
+        .execute(BuildSelectionSupportQuery {
+            my_party: vec![PokemonBuild {
+                species_name: "アタッカー".to_string(),
+                effort_values: EffortValueSpread {
+                    h: 175,
+                    a: 150,
+                    b: 100,
+                    c: 80,
+                    d: 90,
+                    s: 130,
+                },
+                moves: MoveSet {
+                    moves: [
+                        "10まんボルト".to_string(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                    ],
+                },
+                ..Default::default()
+            }],
+            opponents: vec![OpponentSelectionInput {
+                slot_index: 0,
+                name: "アタッカー".to_string(),
+            }],
+        })
+        .unwrap();
+
+    let matchup = &result.opponents[0].matchups[0];
+    assert_eq!(matchup.battle_outcome, Some(BattleOutcome::Uncertain));
 }
 
 #[test]

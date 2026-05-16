@@ -49,6 +49,14 @@ pub struct PokemonMatchupSupport {
     pub speed: Option<SpeedComparison>,
     pub my_attack: Option<AttackSupport>,
     pub opponent_attack: Option<AttackSupport>,
+    pub battle_outcome: Option<BattleOutcome>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BattleOutcome {
+    Win,
+    Lose,
+    Uncertain,
 }
 
 #[derive(Debug, Clone)]
@@ -202,14 +210,21 @@ impl<'a> BuildSelectionSupportUseCase<'a> {
                     )?,
                     None => None,
                 };
+                let battle_outcome = determine_battle_outcome(
+                    speed.as_ref(),
+                    my_attack.as_ref(),
+                    opponent_attack.as_ref(),
+                );
 
                 matchups.push(PokemonMatchupSupport {
                     my_slot_index: my_pokemon.slot_index,
                     my_name: my_pokemon.display_name.clone(),
                     speed,
-                    my_attack,
-                    opponent_attack,
+                    my_attack: my_attack.map(|attack| attack.support),
+                    opponent_attack: opponent_attack.map(|attack| attack.support),
+                    battle_outcome,
                 });
+                
             }
 
             opponents.push(OpponentSelectionSupport {
@@ -284,6 +299,12 @@ impl ResolvedMyPokemon {
 struct ResolvedNature {
     increased_stat_id: u32,
     decreased_stat_id: u32,
+}
+
+#[derive(Debug, Clone)]
+struct EvaluatedAttackSupport {
+    support: AttackSupport,
+    estimated_hits: Option<u8>,
 }
 
 fn top_effort_values(usage: &PokemonUsageSummary) -> EffortValueSpread {
@@ -437,12 +458,12 @@ fn best_attack_support(
     move_names: &[String],
     defender_id: u32,
     defender_stats: [u32; 6],
-) -> Result<Option<AttackSupport>, BuildSelectionSupportError> {
+) -> Result<Option<EvaluatedAttackSupport>, BuildSelectionSupportError> {
     if defender_stats[0] == 0 {
         return Ok(None);
     }
 
-    let mut best: Option<(AttackSupport, u64)> = None;
+    let mut best: Option<(EvaluatedAttackSupport, u64)> = None;
     for move_name in move_names {
         let move_name = move_name.trim();
         if move_name.is_empty() {
@@ -482,17 +503,21 @@ fn best_attack_support(
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let attack = build_attack_support(move_name.to_string(), &damages, defender_stats[0]);
         let score = damages.iter().map(|damage| u64::from(*damage)).sum::<u64>();
+        let attack = EvaluatedAttackSupport {
+            support: build_attack_support(move_name.to_string(), &damages, defender_stats[0]),
+            estimated_hits: estimated_hits(defender_stats[0], score, damages.len()),
+        };
 
         let should_replace = best
             .as_ref()
             .map(|(best_attack, best_score)| {
                 score > *best_score
-                    || (score == *best_score && attack.min_damage > best_attack.min_damage)
                     || (score == *best_score
-                        && attack.min_damage == best_attack.min_damage
-                        && attack.max_damage > best_attack.max_damage)
+                        && attack.support.min_damage > best_attack.support.min_damage)
+                    || (score == *best_score
+                        && attack.support.min_damage == best_attack.support.min_damage
+                        && attack.support.max_damage > best_attack.support.max_damage)
             })
             .unwrap_or(true);
 
@@ -502,6 +527,36 @@ fn best_attack_support(
     }
 
     Ok(best.map(|(attack, _)| attack))
+}
+
+fn determine_battle_outcome(
+    speed: Option<&SpeedComparison>,
+    my_attack: Option<&EvaluatedAttackSupport>,
+    opponent_attack: Option<&EvaluatedAttackSupport>,
+) -> Option<BattleOutcome> {
+    let my_can_damage = my_attack.is_some_and(|attack| attack.support.max_damage > 0);
+    let opponent_can_damage = opponent_attack.is_some_and(|attack| attack.support.max_damage > 0);
+
+    match (my_can_damage, opponent_can_damage) {
+        (false, false) => return Some(BattleOutcome::Uncertain),
+        (true, false) => return Some(BattleOutcome::Win),
+        (false, true) => return Some(BattleOutcome::Lose),
+        (true, true) => {}
+    }
+
+    let speed = speed?;
+    let my_hits = my_attack.and_then(|attack| attack.estimated_hits)?;
+    let opponent_hits = opponent_attack.and_then(|attack| attack.estimated_hits)?;
+
+    Some(match my_hits.cmp(&opponent_hits) {
+        std::cmp::Ordering::Less => BattleOutcome::Win,
+        std::cmp::Ordering::Greater => BattleOutcome::Lose,
+        std::cmp::Ordering::Equal => match speed.my_speed.cmp(&speed.opponent_speed) {
+            std::cmp::Ordering::Greater => BattleOutcome::Win,
+            std::cmp::Ordering::Less => BattleOutcome::Lose,
+            std::cmp::Ordering::Equal => BattleOutcome::Uncertain,
+        },
+    })
 }
 
 fn damage_stat_indices(damage_class_id: u32) -> Option<(usize, usize)> {
@@ -558,6 +613,15 @@ fn guaranteed_hits(defender_hp: u32, min_damage: u32) -> Option<u8> {
 
     let hits = defender_hp.div_ceil(min_damage);
     Some(hits.min(u32::from(u8::MAX)) as u8)
+}
+
+fn estimated_hits(defender_hp: u32, total_damage: u64, sample_count: usize) -> Option<u8> {
+    if defender_hp == 0 || total_damage == 0 || sample_count == 0 {
+        return None;
+    }
+
+    let hits = (u64::from(defender_hp) * sample_count as u64).div_ceil(total_damage);
+    Some(hits.min(u64::from(u8::MAX)) as u8)
 }
 
 fn chance_percent(successes: usize, total: usize) -> f32 {
