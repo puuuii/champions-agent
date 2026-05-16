@@ -5,7 +5,9 @@ use champions_domain::battle::DamageInput;
 use champions_domain::catalog::{BattleMasterData, MoveData, NatureData};
 use champions_domain::party::{EffortValueSpread, MoveSet, PokemonBuild, SavedParty};
 use champions_domain::recognition::ScreenState;
-use champions_domain::usage::{EffortValueUsage, MoveUsage, NatureUsage, PokemonUsageSummary};
+use champions_domain::usage::{
+    EffortValueUsage, ItemUsage, MoveUsage, NatureUsage, PokemonUsageSummary,
+};
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -252,6 +254,8 @@ fn fixture_master_data() -> BattleMasterData {
     let mut pokemon_stats = HashMap::new();
     pokemon_stats.insert(1, [100_u32, 130, 80, 60, 70, 110]);
     pokemon_stats.insert(2, [100, 80, 120, 60, 80, 60]);
+    pokemon_stats.insert(6, [78, 84, 78, 109, 85, 100]);
+    pokemon_stats.insert(10035, [78, 104, 78, 159, 115, 100]);
 
     let mut moves = HashMap::new();
     moves.insert(
@@ -280,6 +284,8 @@ fn fixture_master_data() -> BattleMasterData {
     let mut pokemon_types = HashMap::new();
     pokemon_types.insert(1, vec![1]);
     pokemon_types.insert(2, vec![2]);
+    pokemon_types.insert(6, vec![1, 2]);
+    pokemon_types.insert(10035, vec![1, 2]);
 
     BattleMasterData {
         pokemon_stats,
@@ -851,6 +857,112 @@ fn build_selection_support_uses_usage_pokemon_id_when_catalog_name_lookup_fails(
     assert!(opponent.note.is_none());
     assert!(opponent.assumption.is_some());
     assert_eq!(opponent.assumption.as_ref().unwrap().stats, [175, 100, 140, 80, 100, 80]);
+}
+
+#[test]
+fn build_selection_support_uses_mega_form_when_top_item_is_mega_stone() {
+    let catalog = FakeCatalogRepository::with_species(vec!["アタッカー"]);
+    let repo = FakeUsageRepository::new(vec![PokemonUsageSummary {
+        pokemon_id: 6,
+        name: "リザードン".to_string(),
+        types: vec!["ほのお".to_string(), "ひこう".to_string()],
+        moves: vec![MoveUsage {
+            name: "10まんボルト".to_string(),
+            rate: "100%".to_string(),
+        }],
+        items: vec![
+            ItemUsage {
+                name: "リザードナイトY".to_string(),
+                rate: "55%".to_string(),
+            },
+            ItemUsage {
+                name: "オボンのみ".to_string(),
+                rate: "20%".to_string(),
+            },
+        ],
+        abilities: vec![],
+        effort_values: vec![EffortValueUsage {
+            h: 0,
+            a: 0,
+            b: 0,
+            c: 0,
+            d: 0,
+            s: 0,
+            rate: "100%".to_string(),
+        }],
+        natures: vec![NatureUsage {
+            name: "まじめ".to_string(),
+            rate: "100%".to_string(),
+        }],
+    }]);
+    let uc = BuildSelectionSupportUseCase::new(&catalog, &repo);
+
+    let result = uc
+        .execute(BuildSelectionSupportQuery {
+            my_party: vec![sample_pokemon("アタッカー")],
+            opponents: vec![OpponentSelectionInput {
+                slot_index: 0,
+                name: "リザードン".to_string(),
+            }],
+        })
+        .unwrap();
+
+    let opponent = &result.opponents[0];
+    assert_eq!(opponent.opponent_name, "メガリザードンＹ");
+    assert_eq!(opponent.assumption.as_ref().unwrap().stats, [153, 124, 98, 179, 135, 120]);
+}
+
+#[test]
+fn build_selection_support_keeps_base_form_when_mega_stone_is_not_top_item() {
+    let catalog = FakeCatalogRepository::with_species(vec!["アタッカー"]);
+    let repo = FakeUsageRepository::new(vec![PokemonUsageSummary {
+        pokemon_id: 6,
+        name: "リザードン".to_string(),
+        types: vec!["ほのお".to_string(), "ひこう".to_string()],
+        moves: vec![MoveUsage {
+            name: "10まんボルト".to_string(),
+            rate: "100%".to_string(),
+        }],
+        items: vec![
+            ItemUsage {
+                name: "オボンのみ".to_string(),
+                rate: "55%".to_string(),
+            },
+            ItemUsage {
+                name: "リザードナイトＹ".to_string(),
+                rate: "45%".to_string(),
+            },
+        ],
+        abilities: vec![],
+        effort_values: vec![EffortValueUsage {
+            h: 0,
+            a: 0,
+            b: 0,
+            c: 0,
+            d: 0,
+            s: 0,
+            rate: "100%".to_string(),
+        }],
+        natures: vec![NatureUsage {
+            name: "まじめ".to_string(),
+            rate: "100%".to_string(),
+        }],
+    }]);
+    let uc = BuildSelectionSupportUseCase::new(&catalog, &repo);
+
+    let result = uc
+        .execute(BuildSelectionSupportQuery {
+            my_party: vec![sample_pokemon("アタッカー")],
+            opponents: vec![OpponentSelectionInput {
+                slot_index: 0,
+                name: "リザードン".to_string(),
+            }],
+        })
+        .unwrap();
+
+    let opponent = &result.opponents[0];
+    assert_eq!(opponent.opponent_name, "リザードン");
+    assert_eq!(opponent.assumption.as_ref().unwrap().stats, [153, 104, 98, 129, 105, 120]);
 }
 
 #[test]

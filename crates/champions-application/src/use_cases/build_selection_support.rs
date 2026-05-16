@@ -138,15 +138,15 @@ impl<'a> BuildSelectionSupportUseCase<'a> {
 
         let mut opponents = Vec::new();
         for opponent in query.opponents {
-            let opponent_name = opponent.name.trim().to_string();
-            if opponent_name.is_empty() {
+            let input_name = opponent.name.trim().to_string();
+            if input_name.is_empty() {
                 continue;
             }
 
-            let Some(usage) = usage_by_name.get(&opponent_name) else {
+            let Some(usage) = usage_by_name.get(&input_name) else {
                 opponents.push(OpponentSelectionSupport {
                     slot_index: opponent.slot_index,
-                    opponent_name,
+                    opponent_name: input_name,
                     assumption: None,
                     matchups: Vec::new(),
                     note: Some("使用率データがないため相性を計算できません".to_string()),
@@ -154,7 +154,9 @@ impl<'a> BuildSelectionSupportUseCase<'a> {
                 continue;
             };
 
-            let opponent_species_id = usage.pokemon_id;
+            let assumed_form = assumed_opponent_form(usage);
+            let opponent_name = assumed_form.display_name;
+            let opponent_species_id = assumed_form.species_id;
 
             let assumed_distribution = top_effort_values(usage);
             let assumed_nature_name = top_nature_name(usage);
@@ -224,7 +226,6 @@ impl<'a> BuildSelectionSupportUseCase<'a> {
                     opponent_attack: opponent_attack.map(|attack| attack.support),
                     battle_outcome,
                 });
-                
             }
 
             opponents.push(OpponentSelectionSupport {
@@ -307,6 +308,12 @@ struct EvaluatedAttackSupport {
     estimated_hits: Option<u8>,
 }
 
+#[derive(Debug, Clone)]
+struct AssumedOpponentForm {
+    display_name: String,
+    species_id: u32,
+}
+
 fn top_effort_values(usage: &PokemonUsageSummary) -> EffortValueSpread {
     usage
         .effort_values
@@ -323,6 +330,97 @@ fn top_nature_name(usage: &PokemonUsageSummary) -> Option<String> {
         .max_by(|left, right| rate_score(&left.rate).total_cmp(&rate_score(&right.rate)))
         .map(|nature| nature.name.clone())
         .filter(|name| !name.trim().is_empty())
+}
+
+fn assumed_opponent_form(usage: &PokemonUsageSummary) -> AssumedOpponentForm {
+    top_item_name(usage)
+        .and_then(resolve_mega_form_from_item)
+        .unwrap_or_else(|| AssumedOpponentForm {
+            display_name: usage.name.clone(),
+            species_id: usage.pokemon_id,
+        })
+}
+
+fn top_item_name(usage: &PokemonUsageSummary) -> Option<&str> {
+    usage
+        .items
+        .iter()
+        .max_by(|left, right| rate_score(&left.rate).total_cmp(&rate_score(&right.rate)))
+        .map(|item| item.name.trim())
+        .filter(|name| !name.is_empty())
+}
+
+fn resolve_mega_form_from_item(item_name: &str) -> Option<AssumedOpponentForm> {
+    let normalized = normalize_mega_stone_name(item_name);
+    let (display_name, species_id) = match normalized.as_str() {
+        "ゲンガナイト" => ("メガゲンガー", 10038),
+        "サーナイトナイト" => ("メガサーナイト", 10051),
+        "デンリュウナイト" => ("メガデンリュウ", 10045),
+        "フシギバナイト" => ("メガフシギバナ", 10033),
+        "リザードナイトＸ" => ("メガリザードンＸ", 10034),
+        "カメックスナイト" => ("メガカメックス", 10036),
+        "ミュウツナイトＸ" => ("メガミュウツーＸ", 10043),
+        "ミュウツナイトＹ" => ("メガミュウツーＹ", 10044),
+        "バシャーモナイト" => ("メガバシャーモ", 10050),
+        "チャーレムナイト" => ("メガチャーレム", 10054),
+        "ヘルガナイト" => ("メガヘルガー", 10048),
+        "ボスゴドラナイト" => ("メガボスゴドラ", 10053),
+        "ジュペッタナイト" => ("メガジュペッタ", 10056),
+        "バンギラスナイト" => ("メガバンギラス", 10049),
+        "ハッサムナイト" => ("メガハッサム", 10046),
+        "カイロスナイト" => ("メガカイロス", 10040),
+        "プテラナイト" => ("メガプテラ", 10042),
+        "ルカリオナイト" => ("メガルカリオ", 10059),
+        "ユキノオナイト" => ("メガユキノオー", 10060),
+        "ガルーラナイト" => ("メガガルーラ", 10039),
+        "ギャラドスナイト" => ("メガギャラドス", 10041),
+        "アブソルナイト" => ("メガアブソル", 10057),
+        "リザードナイトＹ" => ("メガリザードンＹ", 10035),
+        "フーディナイト" => ("メガフーディン", 10037),
+        "ヘラクロスナイト" => ("メガヘラクロス", 10047),
+        "クチートナイト" => ("メガクチート", 10052),
+        "ライボルトナイト" => ("メガライボルト", 10055),
+        "ガブリアスナイト" => ("メガガブリアス", 10058),
+        "ラティアスナイト" => ("メガラティアス", 10062),
+        "ラティオスナイト" => ("メガラティオス", 10063),
+        "ラグラージナイト" => ("メガラグラージ", 10064),
+        "ジュカインナイト" => ("メガジュカイン", 10065),
+        "ヤミラミナイト" => ("メガヤミラミ", 10066),
+        "チルタリスナイト" => ("メガチルタリス", 10067),
+        "エルレイドナイト" => ("メガエルレイド", 10068),
+        "タブンネナイト" => ("メガタブンネ", 10069),
+        "メタグロスナイト" => ("メガメタグロス", 10076),
+        "サメハダナイト" => ("メガサメハダー", 10070),
+        "ヤドランナイト" => ("メガヤドラン", 10071),
+        "ハガネールナイト" => ("メガハガネール", 10072),
+        "ピジョットナイト" => ("メガピジョット", 10073),
+        "オニゴーリナイト" => ("メガオニゴーリ", 10074),
+        "ディアンシナイト" => ("メガディアンシー", 10075),
+        "バクーダナイト" => ("メガバクーダ", 10087),
+        "ミミロップナイト" => ("メガミミロップ", 10088),
+        "ボーマンダナイト" => ("メガボーマンダ", 10089),
+        "スピアナイト" => ("メガスピアー", 10090),
+        _ => return None,
+    };
+
+    Some(AssumedOpponentForm {
+        display_name: display_name.to_string(),
+        species_id,
+    })
+}
+
+fn normalize_mega_stone_name(item_name: &str) -> String {
+    item_name
+        .trim()
+        .chars()
+        .map(|ch| match ch {
+            'X' => 'Ｘ',
+            'Y' => 'Ｙ',
+            'x' => 'Ｘ',
+            'y' => 'Ｙ',
+            _ => ch,
+        })
+        .collect()
 }
 
 fn to_effort_value_spread(effort_values: &EffortValueUsage) -> EffortValueSpread {
