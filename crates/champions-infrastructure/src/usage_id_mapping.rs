@@ -32,10 +32,10 @@ pub fn resolve_master_pokemon_id(gamewith_id: &str, name: &str) -> Option<u32> {
         "902_1" => Some(10248), // basculegion-female
 
         // Size forms. GameWith uses different suffix numbering here than master defaults.
-        "711" if name.trim() == "パンプジン(こだま)" => Some(10030), // gourgeist-small
-        "711_1" => Some(711),                                        // gourgeist-average
-        "711_2" => Some(10031),                                      // gourgeist-large
-        "711_3" => Some(10032),                                      // gourgeist-super
+        "711" if name.trim() == "パンプジン(こだま)" => Some(10030),   // gourgeist-small
+        "711_1" => Some(711),   // gourgeist-average
+        "711_2" => Some(10031), // gourgeist-large
+        "711_3" => Some(10032), // gourgeist-super
 
         _ => gamewith_id.trim().parse::<u32>().ok(),
     }
@@ -48,14 +48,8 @@ mod tests {
     #[test]
     fn resolves_plain_numeric_ids_to_master_defaults() {
         assert_eq!(resolve_master_pokemon_id("445", "ガブリアス"), Some(445));
-        assert_eq!(
-            resolve_master_pokemon_id("678", "ニャオニクス(オス)"),
-            Some(678)
-        );
-        assert_eq!(
-            resolve_master_pokemon_id("902", "イダイトウ(オス)"),
-            Some(902)
-        );
+        assert_eq!(resolve_master_pokemon_id("678", "ニャオニクス(オス)"), Some(678));
+        assert_eq!(resolve_master_pokemon_id("902", "イダイトウ(オス)"), Some(902));
     }
 
     #[test]

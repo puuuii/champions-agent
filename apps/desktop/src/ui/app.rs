@@ -24,7 +24,6 @@ use iced::{
     Border, Color, Element, Length, Rectangle, Size, Subscription, Task,
     widget::{button, column, container, row, scrollable, text, text_input},
 };
-use std::time::Instant;
 
 use super::JAPANESE_FONT;
 
@@ -137,10 +136,7 @@ pub enum Message {
 }
 
 impl PokeEditorApp {
-    pub fn new(services: DesktopAppServices, debug_mode: bool) -> (Self, Task<Message>) {
-        let app_started_at = Instant::now();
-
-        let load_party_started_at = Instant::now();
+    pub fn new(services: DesktopAppServices) -> (Self, Task<Message>) {
         let (saved_party, editor_status) = match services.load_party() {
             Ok(party) => (party, None),
             Err(error) => {
@@ -151,7 +147,6 @@ impl PokeEditorApp {
                 )
             }
         };
-        log_startup_profile(debug_mode, "ui.saved_party.load", load_party_started_at);
 
         let pokemons = if saved_party.pokemons.is_empty() {
             std::array::from_fn(|_| PokemonState::new())
@@ -163,7 +158,6 @@ impl PokeEditorApp {
             pokes
         };
 
-        let main_window_started_at = Instant::now();
         let (main_id, main_task) = window::open(window::Settings {
             size: Size {
                 width: 1280.0,
@@ -171,9 +165,7 @@ impl PokeEditorApp {
             },
             ..Default::default()
         });
-        log_startup_profile(debug_mode, "ui.main_window.open", main_window_started_at);
 
-        let preview_window_started_at = Instant::now();
         let (preview_id, preview_task) = window::open(window::Settings {
             size: Size {
                 width: 1920.0,
@@ -181,12 +173,6 @@ impl PokeEditorApp {
             },
             ..Default::default()
         });
-        log_startup_profile(
-            debug_mode,
-            "ui.preview_window.open",
-            preview_window_started_at,
-        );
-        log_startup_profile(debug_mode, "ui.app.new.total", app_started_at);
 
         (
             Self {
@@ -1316,18 +1302,6 @@ impl PokeEditorApp {
             .height(Length::Fill)
             .into()
     }
-}
-
-fn log_startup_profile(enabled: bool, step: &'static str, started_at: Instant) {
-    if !enabled {
-        return;
-    }
-
-    tracing::info!(
-        startup_step = step,
-        elapsed_ms = started_at.elapsed().as_millis() as u64,
-        "startup profile",
-    );
 }
 
 fn restore_pokemon_card<'a>(history_index: usize, draft: &'a PokemonState) -> Element<'a, Message> {

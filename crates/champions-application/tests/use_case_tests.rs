@@ -525,10 +525,7 @@ fn calculate_damage_returns_error_for_missing_pokemon() {
 
 #[test]
 fn refresh_usage_fetches_and_stores() {
-    let fetched = vec![
-        sample_usage(25, "ピカチュウ"),
-        sample_usage(6, "リザードン"),
-    ];
+    let fetched = vec![sample_usage(25, "ピカチュウ"), sample_usage(6, "リザードン")];
     let fetcher = FakeUsageFetcher::new(fetched);
     let repo = FakeUsageRepository::empty();
     let uc = RefreshUsageDataUseCase::new(&fetcher, &repo);
@@ -790,10 +787,7 @@ fn build_selection_support_uses_usage_pokemon_id_when_catalog_name_lookup_fails(
     let opponent = &result.opponents[0];
     assert!(opponent.note.is_none());
     assert!(opponent.assumption.is_some());
-    assert_eq!(
-        opponent.assumption.as_ref().unwrap().stats,
-        [175, 100, 140, 80, 100, 80]
-    );
+    assert_eq!(opponent.assumption.as_ref().unwrap().stats, [175, 100, 140, 80, 100, 80]);
 }
 
 #[test]

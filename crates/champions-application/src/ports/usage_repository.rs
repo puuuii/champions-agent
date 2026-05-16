@@ -2,10 +2,8 @@ use crate::errors::UsageError;
 use champions_domain::usage::PokemonUsageSummary;
 
 pub trait UsageRepository: Send + Sync {
-    fn find_by_pokemon_id(
-        &self,
-        pokemon_id: u32,
-    ) -> Result<Option<PokemonUsageSummary>, UsageError>;
+    fn find_by_pokemon_id(&self, pokemon_id: u32)
+        -> Result<Option<PokemonUsageSummary>, UsageError>;
     fn find_many_by_pokemon_ids(
         &self,
         pokemon_ids: &[u32],
