@@ -24,6 +24,56 @@ struct NameIndex {
     ids: HashMap<String, u32>,
 }
 
+const MEGA_SPECIES_INDEX: &[(&str, u32)] = &[
+    ("メガゲンガー", 10038),
+    ("メガサーナイト", 10051),
+    ("メガデンリュウ", 10045),
+    ("メガフシギバナ", 10033),
+    ("メガリザードンＸ", 10034),
+    ("メガカメックス", 10036),
+    ("メガミュウツーＸ", 10043),
+    ("メガミュウツーＹ", 10044),
+    ("メガバシャーモ", 10050),
+    ("メガチャーレム", 10054),
+    ("メガヘルガー", 10048),
+    ("メガボスゴドラ", 10053),
+    ("メガジュペッタ", 10056),
+    ("メガバンギラス", 10049),
+    ("メガハッサム", 10046),
+    ("メガカイロス", 10040),
+    ("メガプテラ", 10042),
+    ("メガルカリオ", 10059),
+    ("メガユキノオー", 10060),
+    ("メガガルーラ", 10039),
+    ("メガギャラドス", 10041),
+    ("メガアブソル", 10057),
+    ("メガリザードンＹ", 10035),
+    ("メガフーディン", 10037),
+    ("メガヘラクロス", 10047),
+    ("メガクチート", 10052),
+    ("メガライボルト", 10055),
+    ("メガガブリアス", 10058),
+    ("メガラティアス", 10062),
+    ("メガラティオス", 10063),
+    ("メガラグラージ", 10064),
+    ("メガジュカイン", 10065),
+    ("メガヤミラミ", 10066),
+    ("メガチルタリス", 10067),
+    ("メガエルレイド", 10068),
+    ("メガタブンネ", 10069),
+    ("メガメタグロス", 10076),
+    ("メガサメハダー", 10070),
+    ("メガヤドラン", 10071),
+    ("メガハガネール", 10072),
+    ("メガピジョット", 10073),
+    ("メガオニゴーリ", 10074),
+    ("メガディアンシー", 10075),
+    ("メガバクーダ", 10087),
+    ("メガミミロップ", 10088),
+    ("メガボーマンダ", 10089),
+    ("メガスピアー", 10090),
+];
+
 #[derive(Debug, Deserialize)]
 struct PokemonStatRecord {
     pokemon_id: u32,
@@ -97,6 +147,8 @@ impl CsvCatalogRepository {
         } else {
             Self::load_name_index_csv_optional(&master_data_dir.join("pokemon_species_names.csv"))?
         };
+        Self::append_mega_species(&mut index);
+
         let default_path = master_data_dir.join("usage.json");
         let path = usage_json_path.unwrap_or(&default_path);
         if !path.exists() {
@@ -242,6 +294,13 @@ impl CsvCatalogRepository {
         }
     }
 
+    fn append_mega_species(index: &mut NameIndex) {
+        for &(name, id) in MEGA_SPECIES_INDEX {
+            index.names.push(name.to_string());
+            index.ids.entry(name.to_string()).or_insert(id);
+        }
+    }
+
     fn partial_match(names: &[String], query: &str, limit: usize) -> Vec<String> {
         if query.is_empty() || limit == 0 {
             return Vec::new();
@@ -270,12 +329,29 @@ impl CsvCatalogRepository {
     }
 
     fn normalize_for_match(value: &str) -> String {
-        value.chars().map(Self::normalize_kana_char).collect()
+        value.chars().map(Self::normalize_match_char).collect()
     }
 
-    fn normalize_kana_char(ch: char) -> char {
+    fn normalize_species_lookup(value: &str) -> String {
+        value
+            .chars()
+            .map(Self::normalize_species_lookup_char)
+            .collect()
+    }
+
+    fn normalize_match_char(ch: char) -> char {
         match ch {
             '\u{30A1}'..='\u{30F6}' => char::from_u32(ch as u32 - 0x60).unwrap_or(ch),
+            'X' | 'x' | 'Ｘ' => 'x',
+            'Y' | 'y' | 'Ｙ' => 'y',
+            _ => ch,
+        }
+    }
+
+    fn normalize_species_lookup_char(ch: char) -> char {
+        match ch {
+            'X' | 'x' => 'Ｘ',
+            'Y' | 'y' => 'Ｙ',
             _ => ch,
         }
     }
@@ -303,7 +379,13 @@ impl CatalogRepository for CsvCatalogRepository {
     }
 
     fn find_species_id_by_name(&self, name: &str) -> Result<Option<u32>, CatalogError> {
-        Ok(self.species_name_to_id.get(name.trim()).copied())
+        let trimmed = name.trim();
+        if let Some(id) = self.species_name_to_id.get(trimmed).copied() {
+            return Ok(Some(id));
+        }
+
+        let normalized = Self::normalize_species_lookup(trimmed);
+        Ok(self.species_name_to_id.get(&normalized).copied())
     }
 
     fn find_move_id_by_name(&self, name: &str) -> Result<Option<u32>, CatalogError> {
@@ -472,6 +554,50 @@ mod tests {
         assert_eq!(
             result,
             vec!["ピカチュウ".to_string(), "ライチュウ".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_partial_match_treats_mega_suffix_width_as_equivalent() {
+        let names = vec![
+            "メガリザードンＸ".to_string(),
+            "メガミュウツーＹ".to_string(),
+        ];
+        let result = CsvCatalogRepository::partial_match(&names, "メガリザードンX", 10);
+        assert_eq!(result, vec!["メガリザードンＸ".to_string()]);
+    }
+
+    #[test]
+    fn test_append_mega_species_registers_names_and_ids() {
+        let mut index = NameIndex::default();
+        CsvCatalogRepository::append_mega_species(&mut index);
+
+        assert!(index.names.iter().any(|name| name == "メガリザードンＸ"));
+        assert_eq!(index.ids.get("メガリザードンＸ"), Some(&10034));
+        assert_eq!(index.ids.get("メガボーマンダ"), Some(&10089));
+    }
+
+    #[test]
+    fn test_find_species_id_by_name_normalizes_mega_suffix_width() {
+        let repo = CsvCatalogRepository {
+            master_data_dir: PathBuf::new(),
+            species_names: vec!["メガリザードンＸ".to_string()],
+            species_name_to_id: HashMap::from([("メガリザードンＸ".to_string(), 10034)]),
+            move_names: Vec::new(),
+            move_name_to_id: HashMap::new(),
+            item_names: Vec::new(),
+            nature_names: Vec::new(),
+            nature_name_to_id: HashMap::new(),
+            ability_names: Vec::new(),
+        };
+
+        assert_eq!(
+            repo.find_species_id_by_name("メガリザードンX").unwrap(),
+            Some(10034)
+        );
+        assert_eq!(
+            repo.find_species_id_by_name("メガリザードンx").unwrap(),
+            Some(10034)
         );
     }
 
