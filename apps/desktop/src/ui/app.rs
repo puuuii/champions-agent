@@ -5,8 +5,8 @@ use super::pokemon::{
 use super::subscriptions::{self, RuntimeMessage};
 use crate::services::{DesktopAppServices, SuggestionKind};
 use champions_application::use_cases::{
-    AttackSupport, BattleOutcome, BuildSelectionSupportResult, KoSummary, OpponentAssumption,
-    OpponentSelectionInput, OpponentSelectionSupport, PokemonMatchupSupport, SpeedComparison,
+    BattleOutcome, BuildSelectionSupportResult, KoSummary, OpponentSelectionInput,
+    OpponentSelectionSupport, PokemonMatchupSupport,
 };
 use champions_domain::party::{PokemonBuild, SavedParty};
 use champions_interface::{
@@ -1079,11 +1079,7 @@ impl PokeEditorApp {
                     container(text("名前").font(JAPANESE_FONT).size(16)).width(Length::Fixed(80.0))
                 ]
                 .spacing(10);
-                let mut type_row = row![
-                    container(text("タイプ").font(JAPANESE_FONT).size(16))
-                        .width(Length::Fixed(80.0))
-                ]
-                .spacing(10);
+
                 let mut move_row = row![
                     container(text("技").font(JAPANESE_FONT).size(16)).width(Length::Fixed(80.0))
                 ]
@@ -1156,24 +1152,6 @@ impl PokeEditorApp {
                     }
 
                     name_row = name_row.push(container(name_cell).width(Length::FillPortion(1)));
-                    type_row = type_row.push(
-                        container(
-                            text(
-                                usage
-                                    .map(|usage| {
-                                        if usage.types.is_empty() {
-                                            "-".to_string()
-                                        } else {
-                                            usage.types.join(", ")
-                                        }
-                                    })
-                                    .unwrap_or_else(|| "使用率データなし".to_string()),
-                            )
-                            .font(JAPANESE_FONT)
-                            .size(14),
-                        )
-                        .width(Length::FillPortion(1)),
-                    );
 
                     let mut moves_col = column![].spacing(2);
                     if let Some(usage) = usage {
@@ -1244,6 +1222,24 @@ impl PokeEditorApp {
                     }
                     ev_row = ev_row.push(container(evs_col).width(Length::FillPortion(1)));
 
+                    let winning_summary = self
+                        .selection_support
+                        .as_ref()
+                        .and_then(|support| {
+                            support
+                                .opponents
+                                .iter()
+                                .find(|opponent| opponent.slot_index == pokemon.slot_index)
+                        })
+                        .map(format_opponent_winning_pokemon_summary)
+                        .unwrap_or_else(|| {
+                            if self.selection_support_status.is_some() {
+                                "勝てる自ポケモン: 算出不可".to_string()
+                            } else {
+                                "勝てる自ポケモン: 算出待ち".to_string()
+                            }
+                        });
+
                     let mut natures_col = column![].spacing(2);
                     if let Some(usage) = usage {
                         for n in usage.natures.iter().take(2) {
@@ -1257,6 +1253,11 @@ impl PokeEditorApp {
                         natures_col =
                             natures_col.push(text("使用率データなし").font(JAPANESE_FONT).size(12));
                     }
+                    natures_col = natures_col.push(
+                        text(winning_summary)
+                            .font(JAPANESE_FONT)
+                            .size(12),
+                    );
                     nature_row =
                         nature_row.push(container(natures_col).width(Length::FillPortion(1)));
                 }
@@ -1270,20 +1271,6 @@ impl PokeEditorApp {
                     );
                 }
 
-                let table = column![
-                    name_row,
-                    type_row,
-                    move_row,
-                    item_row,
-                    ability_row,
-                    ev_row,
-                    nature_row
-                ]
-                .spacing(20);
-                content = content.push(table);
-
-                content = content.push(text("相性一覧").font(JAPANESE_FONT).size(24));
-
                 if let Some(status) = &self.selection_support_status {
                     content = content.push(
                         container(text(status).font(JAPANESE_FONT).size(14))
@@ -1292,25 +1279,9 @@ impl PokeEditorApp {
                     );
                 }
 
-                if let Some(selection_support) = &self.selection_support {
-                    if selection_support.opponents.is_empty() {
-                        content = content.push(
-                            text("相性を計算できる相手ポケモンがまだありません。")
-                                .font(JAPANESE_FONT)
-                                .size(14),
-                        );
-                    } else {
-                        for opponent in &selection_support.opponents {
-                            content = content.push(selection_support_card(opponent));
-                        }
-                    }
-                } else if self.selection_support_status.is_none() {
-                    content = content.push(
-                        text("相性を表示するには、相手ポケモン名が確定した状態で使用率データが必要です。")
-                            .font(JAPANESE_FONT)
-                            .size(14),
-                    );
-                }
+                let table = column![name_row, move_row, item_row, ability_row, ev_row, nature_row]
+                    .spacing(20);
+                content = content.push(table);
 
                 scrollable(content).into()
             }
@@ -1454,115 +1425,16 @@ fn format_conflict_summary(conflicts: &[ConflictView]) -> Option<String> {
     Some(format!("重複候補があります: {body}"))
 }
 
-fn selection_support_card<'a>(opponent: &'a OpponentSelectionSupport) -> Element<'a, Message> {
-    let header = row![
-        text(format!(
-            "#{} {}",
-            opponent.slot_index + 1,
-            opponent.opponent_name
-        ))
-        .font(JAPANESE_FONT)
-        .size(22),
-        container(
-            text(format_winning_pokemon_summary(&opponent.matchups))
-                .font(JAPANESE_FONT)
-                .size(13)
-        )
-        .width(Length::Fill),
-    ]
-    .spacing(12)
-    .align_y(iced::Alignment::Center);
-
-    let mut content = column![header].spacing(10);
-    if let Some(assumption) = &opponent.assumption {
-        content = content.push(
-            text(format_opponent_assumption(assumption))
-                .font(JAPANESE_FONT)
-                .size(13),
-        );
-    }
-
-    if let Some(note) = &opponent.note {
-        content = content.push(text(note).font(JAPANESE_FONT).size(13));
-    }
-
+fn format_opponent_winning_pokemon_summary(opponent: &OpponentSelectionSupport) -> String {
     if opponent.matchups.is_empty() {
-        content = content.push(
-            text("比較できる自パーティ情報がまだありません。")
-                .font(JAPANESE_FONT)
-                .size(13),
-        );
+        if opponent.note.is_some() {
+            "勝てる自ポケモン: 算出不可".to_string()
+        } else {
+            "勝てる自ポケモン: 比較不可".to_string()
+        }
     } else {
-        content = content.push(
-            column(
-                opponent
-                    .matchups
-                    .iter()
-                    .map(|matchup| selection_support_matchup_row(matchup)),
-            )
-            .spacing(10),
-        );
+        format_winning_pokemon_summary(&opponent.matchups)
     }
-
-    container(content)
-        .padding(16)
-        .width(Length::Fill)
-        .style(|_| container::Style {
-            border: Border {
-                color: Color::from_rgb(0.78, 0.78, 0.82),
-                width: 1.0,
-                radius: 8.0.into(),
-            },
-            ..Default::default()
-        })
-        .into()
-}
-
-fn selection_support_matchup_row<'a>(matchup: &'a PokemonMatchupSupport) -> Element<'a, Message> {
-    let body = column![
-        text(format!(
-            "#{} {}",
-            matchup.my_slot_index + 1,
-            matchup.my_name
-        ))
-        .font(JAPANESE_FONT)
-        .size(18),
-        text(format_speed_summary(matchup.speed.as_ref()))
-            .font(JAPANESE_FONT)
-            .size(13),
-        text(format_attack_summary("攻撃", matchup.my_attack.as_ref()))
-            .font(JAPANESE_FONT)
-            .size(13),
-        text(format_attack_summary(
-            "被弾",
-            matchup.opponent_attack.as_ref()
-        ))
-        .font(JAPANESE_FONT)
-        .size(13),
-    ]
-    .spacing(4);
-
-    container(body)
-        .padding(12)
-        .width(Length::Fill)
-        .style(|_| container::Style {
-            border: Border {
-                color: Color::from_rgb(0.86, 0.86, 0.9),
-                width: 1.0,
-                radius: 6.0.into(),
-            },
-            ..Default::default()
-        })
-        .into()
-}
-
-fn format_opponent_assumption(assumption: &OpponentAssumption) -> String {
-    let nature = assumption.nature_name.as_deref().unwrap_or("不明");
-    format!(
-        "想定能力値(最頻配分/性格反映): 性格 {nature} / 配分 {} / 実数 {}",
-        format_effort_value_spread(&assumption.effort_values),
-        format_actual_stats(&assumption.stats),
-    )
 }
 
 fn format_winning_pokemon_summary(matchups: &[PokemonMatchupSupport]) -> String {
@@ -1579,55 +1451,7 @@ fn format_winning_pokemon_summary(matchups: &[PokemonMatchupSupport]) -> String 
     }
 }
 
-fn format_effort_value_spread(values: &champions_domain::party::EffortValueSpread) -> String {
-    format!(
-        "H{} A{} B{} C{} D{} S{}",
-        values.h, values.a, values.b, values.c, values.d, values.s
-    )
-}
 
-fn format_actual_stats(stats: &[u32; 6]) -> String {
-    format!(
-        "H{} A{} B{} C{} D{} S{}",
-        stats[0], stats[1], stats[2], stats[3], stats[4], stats[5]
-    )
-}
-
-fn format_speed_summary(speed: Option<&SpeedComparison>) -> String {
-    match speed {
-        Some(speed) => format!(
-            "先手率: 自{} / 相{} (S {} vs {})",
-            format_percent(speed.my_first_chance_percent),
-            format_percent(speed.opponent_first_chance_percent),
-            speed.my_speed,
-            speed.opponent_speed,
-        ),
-        None => "先手率: 計算不可".to_string(),
-    }
-}
-
-fn format_attack_summary(label: &str, attack: Option<&AttackSupport>) -> String {
-    match attack {
-        Some(attack) if attack.max_damage == 0 => {
-            format!("{label}: {} / 有効打なし", attack.move_name)
-        }
-        Some(attack) => {
-            let guaranteed = attack
-                .guaranteed_hits
-                .map(|hits| format!(" / 確{hits}発"))
-                .unwrap_or_default();
-            format!(
-                "{label}: {} / {}{} / {}-{}",
-                attack.move_name,
-                format_ko_summary(&attack.ko_summary),
-                guaranteed,
-                attack.min_damage,
-                attack.max_damage,
-            )
-        }
-        None => format!("{label}: 計算不可"),
-    }
-}
 
 fn format_ko_summary(summary: &KoSummary) -> String {
     match summary {
