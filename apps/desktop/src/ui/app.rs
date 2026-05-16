@@ -765,6 +765,20 @@ impl PokeEditorApp {
         }
     }
 
+    fn displayed_opponent_name(&self, slot_index: u8, input_name: &str) -> String {
+        self.selection_support
+            .as_ref()
+            .and_then(|support| {
+                support
+                    .opponents
+                    .iter()
+                    .find(|opponent| opponent.slot_index == slot_index)
+            })
+            .map(|opponent| opponent.opponent_name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| input_name.trim().to_string())
+    }
+
     fn current_party_builds(&self) -> Vec<PokemonBuild> {
         self.pokemons.iter().map(PokemonState::to_build).collect()
     }
@@ -1094,11 +1108,17 @@ impl PokeEditorApp {
 
                 for (index, pokemon) in party.pokemons.iter().enumerate() {
                     let usage = pokemon.usage.as_ref();
+                    let displayed_name = self.displayed_opponent_name(pokemon.slot_index, &pokemon.input_name);
+                    let slot_label = if displayed_name.is_empty() {
+                        format!("#{}", pokemon.slot_index + 1)
+                    } else {
+                        format!("#{} {}", pokemon.slot_index + 1, displayed_name)
+                    };
 
                     let mut name_cell = column![
-                        text(format!("#{}", pokemon.slot_index + 1))
+                        text(slot_label)
                             .font(JAPANESE_FONT)
-                            .size(14),
+                            .size(16),
                         text_input("相手ポケモン名", &pokemon.input_name)
                             .on_input(move |value| Message::OpponentPokemonNameChanged(
                                 index, value
