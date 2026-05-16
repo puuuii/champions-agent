@@ -1,5 +1,9 @@
-use std::path::Path;
+use crate::persistence::atomic_write;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::UNIX_EPOCH;
 
 use champions_application::{
     PartyIdentifier, PartyIdentifierError, PartyImageSet, RecognitionConfig,
@@ -22,6 +26,26 @@ const INPUT_SIZE: u32 = 224;
 const HIGH_CONFIDENCE_THRESHOLD: f32 = 0.85;
 const LOW_CONFIDENCE_THRESHOLD: f32 = 0.5;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct FileSignature {
+    file_name: String,
+    len: u64,
+    modified_unix_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct MasterEmbeddingCacheKey {
+    onnx_model: FileSignature,
+    master_images: Vec<FileSignature>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct MasterEmbeddingCache {
+    key: MasterEmbeddingCacheKey,
+    master_names: Vec<String>,
+    master_embeddings: Vec<Vec<f32>>,
+}
+
 pub struct OnnxPartyIdentifier {
     session: Mutex<Session>,
     master_embeddings: Vec<Array1<f32>>,
@@ -32,12 +56,15 @@ impl OnnxPartyIdentifier {
     pub fn new(
         onnx_path: impl AsRef<Path>,
         master_images_dir: impl AsRef<Path>,
+        cache_path: impl AsRef<Path>,
     ) -> Result<Self, PartyIdentifierError> {
         let onnx_path = onnx_path.as_ref();
         let master_images_dir = master_images_dir.as_ref();
+        let cache_path = cache_path.as_ref();
         tracing::info!(
             onnx_path = %onnx_path.display(),
             master_images_dir = %master_images_dir.display(),
+            cache_path = %cache_path.display(),
             "initializing ONNX party identifier",
         );
         let session = Session::builder()
@@ -63,7 +90,7 @@ impl OnnxPartyIdentifier {
             master_names: Vec::new(),
         };
 
-        identifier.cache_master_data(master_images_dir)?;
+        identifier.cache_master_data(onnx_path, master_images_dir, &cache_path)?;
         tracing::info!(
             species_count = identifier.master_names.len(),
             "ONNX party identifier initialized",
@@ -73,17 +100,12 @@ impl OnnxPartyIdentifier {
 
     fn cache_master_data(
         &mut self,
+        onnx_path: &Path,
         master_dir: impl AsRef<Path>,
+        cache_path: &Path,
     ) -> Result<(), PartyIdentifierError> {
         let master_dir = master_dir.as_ref();
-        let paths: Vec<std::path::PathBuf> = std::fs::read_dir(master_dir)
-            .map_err(|e| {
-                PartyIdentifierError::MasterDataNotLoaded(format!("{}: {e}", master_dir.display()))
-            })?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|ext| ext == "png"))
-            .collect();
+        let paths = collect_master_image_paths(master_dir)?;
 
         if paths.is_empty() {
             return Err(PartyIdentifierError::MasterDataNotLoaded(
@@ -96,6 +118,36 @@ impl OnnxPartyIdentifier {
             image_count = paths.len(),
             "loading master images",
         );
+
+        let cache_key = match build_cache_key(onnx_path, &paths) {
+            Ok(key) => Some(key),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    cache_path = %cache_path.display(),
+                    "failed to build master embedding cache key; regenerating embeddings",
+                );
+                None
+            }
+        };
+
+        if let Some(cache_key) = cache_key.as_ref() {
+            if let Some(cache) = try_read_master_embedding_cache(cache_path, cache_key) {
+                self.master_names = cache.master_names;
+                self.master_embeddings = cache
+                    .master_embeddings
+                    .into_iter()
+                    .map(Array1::from_vec)
+                    .collect();
+
+                tracing::info!(
+                    cache_path = %cache_path.display(),
+                    species_count = self.master_names.len(),
+                    "loaded master embeddings from cache",
+                );
+                return Ok(());
+            }
+        }
 
         let processed_data: Vec<(String, Array3<f32>)> = paths
             .into_par_iter()
@@ -111,6 +163,32 @@ impl OnnxPartyIdentifier {
             let emb = self.run_single_embedding(tensor)?;
             self.master_embeddings.push(l2_normalize(emb));
             self.master_names.push(name);
+        }
+
+        if let Some(cache_key) = cache_key {
+            let cache = MasterEmbeddingCache {
+                key: cache_key,
+                master_names: self.master_names.clone(),
+                master_embeddings: self
+                    .master_embeddings
+                    .iter()
+                    .map(|embedding| embedding.to_vec())
+                    .collect(),
+            };
+
+            if let Err(error) = write_master_embedding_cache(cache_path, &cache) {
+                tracing::warn!(
+                    %error,
+                    cache_path = %cache_path.display(),
+                    "failed to persist master embedding cache",
+                );
+            } else {
+                tracing::info!(
+                    cache_path = %cache_path.display(),
+                    species_count = self.master_names.len(),
+                    "persisted master embeddings cache",
+                );
+            }
         }
 
         tracing::info!(
@@ -263,4 +341,225 @@ fn preprocess_single(img: &DynamicImage) -> Array3<f32> {
 fn l2_normalize(v: Array1<f32>) -> Array1<f32> {
     let norm = v.dot(&v).sqrt().max(1e-12);
     v / norm
+}
+
+fn collect_master_image_paths(master_dir: &Path) -> Result<Vec<PathBuf>, PartyIdentifierError> {
+    let mut paths: Vec<PathBuf> = fs::read_dir(master_dir)
+        .map_err(|e| {
+            PartyIdentifierError::MasterDataNotLoaded(format!("{}: {e}", master_dir.display()))
+        })?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "png"))
+        .collect();
+
+    paths.sort_by(|left, right| file_name_for_cache(left).cmp(&file_name_for_cache(right)));
+
+    Ok(paths)
+}
+
+fn build_cache_key(
+    onnx_path: &Path,
+    image_paths: &[PathBuf],
+) -> Result<MasterEmbeddingCacheKey, PartyIdentifierError> {
+    let onnx_model = build_file_signature(onnx_path)?;
+    let master_images = image_paths
+        .iter()
+        .map(|path| build_file_signature(path))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(MasterEmbeddingCacheKey {
+        onnx_model,
+        master_images,
+    })
+}
+
+fn build_file_signature(path: &Path) -> Result<FileSignature, PartyIdentifierError> {
+    let metadata = fs::metadata(path).map_err(|e| {
+        PartyIdentifierError::MasterDataNotLoaded(format!(
+            "failed to read metadata for {}: {e}",
+            path.display()
+        ))
+    })?;
+    let modified = metadata.modified().map_err(|e| {
+        PartyIdentifierError::MasterDataNotLoaded(format!(
+            "failed to read modified time for {}: {e}",
+            path.display()
+        ))
+    })?;
+    let modified_unix_secs = modified
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| {
+            PartyIdentifierError::MasterDataNotLoaded(format!(
+                "failed to normalize modified time for {}: {e}",
+                path.display()
+            ))
+        })?
+        .as_secs();
+
+    Ok(FileSignature {
+        file_name: file_name_for_cache(path),
+        len: metadata.len(),
+        modified_unix_secs,
+    })
+}
+
+fn file_name_for_cache(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+fn try_read_master_embedding_cache(
+    cache_path: &Path,
+    expected_key: &MasterEmbeddingCacheKey,
+) -> Option<MasterEmbeddingCache> {
+    if !cache_path.is_file() {
+        return None;
+    }
+
+    let data = match fs::read_to_string(cache_path) {
+        Ok(data) => data,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                cache_path = %cache_path.display(),
+                "failed to read master embedding cache; regenerating",
+            );
+            return None;
+        }
+    };
+
+    let cache: MasterEmbeddingCache = match serde_json::from_str(&data) {
+        Ok(cache) => cache,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                cache_path = %cache_path.display(),
+                "failed to parse master embedding cache; regenerating",
+            );
+            return None;
+        }
+    };
+
+    if cache.key != *expected_key {
+        tracing::info!(
+            cache_path = %cache_path.display(),
+            "master embedding cache is stale; regenerating",
+        );
+        return None;
+    }
+
+    if cache.master_names.len() != cache.master_embeddings.len() || cache.master_names.is_empty() {
+        tracing::warn!(
+            cache_path = %cache_path.display(),
+            "master embedding cache contents are invalid; regenerating",
+        );
+        return None;
+    }
+
+    let embedding_dim = cache.master_embeddings[0].len();
+    if embedding_dim == 0
+        || cache
+            .master_embeddings
+            .iter()
+            .any(|embedding| embedding.len() != embedding_dim)
+    {
+        tracing::warn!(
+            cache_path = %cache_path.display(),
+            "master embedding cache dimensions are invalid; regenerating",
+        );
+        return None;
+    }
+
+    Some(cache)
+}
+
+fn write_master_embedding_cache(
+    cache_path: &Path,
+    cache: &MasterEmbeddingCache,
+) -> Result<(), PartyIdentifierError> {
+    if let Some(parent) = cache_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            PartyIdentifierError::MasterDataNotLoaded(format!(
+                "failed to create cache directory {}: {e}",
+                parent.display()
+            ))
+        })?;
+    }
+
+    let json = serde_json::to_vec(cache).map_err(|e| {
+        PartyIdentifierError::MasterDataNotLoaded(format!(
+            "failed to serialize master embedding cache: {e}"
+        ))
+    })?;
+
+    atomic_write(cache_path, &json).map_err(|e| {
+        PartyIdentifierError::MasterDataNotLoaded(format!(
+            "failed to write master embedding cache {}: {e}",
+            cache_path.display()
+        ))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_test_dir(name: &str) -> PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("champions_{name}_{stamp}"))
+    }
+
+    #[test]
+    fn master_embedding_cache_round_trips() {
+        let dir = unique_test_dir("master_embedding_cache_round_trip");
+        fs::create_dir_all(&dir).unwrap();
+        let cache_path = dir.join("master_embeddings.json");
+        let cache = MasterEmbeddingCache {
+            key: MasterEmbeddingCacheKey {
+                onnx_model: FileSignature {
+                    file_name: "dinov2_vits14.onnx".to_string(),
+                    len: 123,
+                    modified_unix_secs: 456,
+                },
+                master_images: vec![FileSignature {
+                    file_name: "pikachu.png".to_string(),
+                    len: 789,
+                    modified_unix_secs: 999,
+                }],
+            },
+            master_names: vec!["pikachu".to_string()],
+            master_embeddings: vec![vec![0.25, 0.5, 1.0]],
+        };
+
+        write_master_embedding_cache(&cache_path, &cache).unwrap();
+        let loaded = try_read_master_embedding_cache(&cache_path, &cache.key).unwrap();
+
+        assert_eq!(loaded, cache);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn collect_master_image_paths_sorts_file_names() {
+        let dir = unique_test_dir("collect_master_image_paths_sorts_file_names");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("zoroark.png"), b"z").unwrap();
+        fs::write(dir.join("pikachu.png"), b"p").unwrap();
+        fs::write(dir.join("ignore.txt"), b"x").unwrap();
+
+        let paths = collect_master_image_paths(&dir).unwrap();
+        let file_names: Vec<String> = paths
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+
+        assert_eq!(file_names, vec!["pikachu.png", "zoroark.png"]);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
