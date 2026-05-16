@@ -1,9 +1,14 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::{LazyLock, Mutex},
+};
 
 use champions_application::{OcrEngine, OcrError, OcrImage};
 use manga_ocr_rs::{MangaOcr, default_model_dir};
 
 const REQUIRED_MODEL_FILES: [&str; 3] = ["encoder_model.onnx", "decoder_model.onnx", "vocab.txt"];
+
+static MANGA_OCR_STDOUT_REDIRECT_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 pub struct MangaOcrEngine {
     inner: MangaOcr,
@@ -22,7 +27,7 @@ impl MangaOcrEngine {
 
         for candidate in candidate_model_dirs(&requested_path, &fallback_path) {
             tracing::debug!(model_dir = %candidate.display(), "attempting Manga OCR model directory");
-            match MangaOcr::new(&candidate) {
+            match with_suppressed_manga_ocr_stdout(|| MangaOcr::new(&candidate)) {
                 Ok(inner) => {
                     tracing::info!(model_dir = %candidate.display(), "Manga OCR engine initialized");
                     return Ok(Self { inner });
@@ -44,6 +49,31 @@ impl MangaOcrEngine {
             &errors,
         )))
     }
+}
+
+fn with_suppressed_manga_ocr_stdout<T>(operation: impl FnOnce() -> T) -> T {
+    let _redirect_lock = match MANGA_OCR_STDOUT_REDIRECT_LOCK.lock() {
+        Ok(lock) => lock,
+        Err(poisoned) => {
+            tracing::warn!(
+                "Manga OCR stdout redirect lock was poisoned; continuing with suppression"
+            );
+            poisoned.into_inner()
+        }
+    };
+
+    let _stdout_gag = match gag::Gag::stdout() {
+        Ok(gag) => Some(gag),
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "failed to suppress Manga OCR stdout; continuing without stdout suppression",
+            );
+            None
+        }
+    };
+
+    operation()
 }
 
 fn candidate_model_dirs(requested_path: &Path, fallback_path: &Path) -> Vec<PathBuf> {
@@ -99,8 +129,7 @@ impl OcrEngine for MangaOcrEngine {
 
         let dynamic_img = image::DynamicImage::ImageRgb8(rgb_image);
 
-        self.inner
-            .recognize(&dynamic_img)
+        with_suppressed_manga_ocr_stdout(|| self.inner.recognize(&dynamic_img))
             .map_err(|e| OcrError::InferenceFailed(format!("OCR inference error: {e}")))
     }
 }
