@@ -132,15 +132,21 @@ impl BattleSelectionState {
             return;
         }
 
-        let next_count = seen_counts
+        seen_counts
             .entry(candidate.name.clone())
             .and_modify(|count| *count = count.saturating_add(1))
             .or_insert(1);
 
-        if candidate.is_high_confidence || *next_count >= 2 {
-            if confirmed.len() < 3 {
-                confirmed.push(candidate.name);
-            }
+        tracing::debug!(
+            pokemon_name = %candidate.name,
+            score = candidate.score,
+            is_high_confidence = candidate.is_high_confidence,
+            confirmed_count = confirmed.len(),
+            "battle selection candidate observed"
+        );
+
+        if confirmed.len() < 3 {
+            confirmed.push(candidate.name);
         }
     }
 }
@@ -1637,6 +1643,8 @@ fn format_winning_pokemon_list(matchups: &[PokemonMatchupSupport]) -> String {
 }
 
 fn battle_selection_matrix_view(state: &BattleSelectionState) -> Element<'_, Message> {
+    const MATRIX_HEIGHT: f32 = 320.0;
+
     let enemy_headers = (0..3)
         .map(|index| {
             state
@@ -1690,7 +1698,9 @@ fn battle_selection_matrix_view(state: &BattleSelectionState) -> Element<'_, Mes
         ]
         .spacing(8),
     )
+    .padding(8)
     .width(Length::Fill)
+    .height(Length::Fixed(MATRIX_HEIGHT))
     .into()
 }
 
@@ -1712,11 +1722,6 @@ fn battle_selection_matrix_cell(content: String, is_header: bool) -> Element<'st
                 width: 1.0,
                 radius: 4.0.into(),
             },
-            background: Some(if is_header {
-                Color::from_rgb(0.95, 0.95, 0.95).into()
-            } else {
-                Color::WHITE.into()
-            }),
             ..Default::default()
         })
         .into()

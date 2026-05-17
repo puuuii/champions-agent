@@ -195,7 +195,7 @@ impl OnnxPartyIdentifier {
     ) -> Result<Option<RecognizedPokemon>, PartyIdentifierError> {
         let candidate_indices = candidate_names
             .iter()
-            .filter_map(|candidate_name| self.master_names.iter().position(|name| name == candidate_name))
+            .filter_map(|candidate_name| self.resolve_candidate_index(candidate_name))
             .collect::<Vec<_>>();
 
         if candidate_indices.is_empty() {
@@ -238,6 +238,24 @@ impl OnnxPartyIdentifier {
             candidates,
         }))
     }
+
+    fn resolve_candidate_index(&self, candidate_name: &str) -> Option<usize> {
+        self.master_names
+            .iter()
+            .position(|name| name == candidate_name)
+            .or_else(|| {
+                let normalized_candidate = normalize_species_name(candidate_name);
+                self.master_names
+                    .iter()
+                    .position(|name| normalize_species_name(name) == normalized_candidate)
+            })
+    }
+}
+
+fn normalize_species_name(name: &str) -> String {
+    name.chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
 }
 
 impl PartyIdentifier for OnnxPartyIdentifier {

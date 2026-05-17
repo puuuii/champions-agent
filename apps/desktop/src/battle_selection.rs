@@ -92,7 +92,8 @@ fn map_recognized_candidate(recognized: RecognizedPokemon) -> Option<BattleSelec
     let (score, is_high_confidence) = match recognized.confidence {
         ConfidenceScore::High(score) => (score, true),
         ConfidenceScore::Medium(score) => (score, false),
-        ConfidenceScore::Low(_) | ConfidenceScore::Unknown => return None,
+        ConfidenceScore::Low(score) => (score, false),
+        ConfidenceScore::Unknown => (0.0, false),
     };
 
     Some(BattleSelectionCandidate {
