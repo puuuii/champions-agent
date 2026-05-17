@@ -1459,17 +1459,24 @@ impl PokeEditorApp {
                 ]
                 .spacing(20);
                 content = content.push(table);
-                content = content.push(battle_selection_matrix_view(&self.battle_selection));
 
                 scrollable(content).into()
             }
         };
 
-        container(column![header_row, phase_controls, content].spacing(20))
-            .padding(20)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        container(
+            column![
+                header_row,
+                phase_controls,
+                content,
+                battle_selection_matrix_view(&self.battle_selection)
+            ]
+            .spacing(20),
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 }
 
