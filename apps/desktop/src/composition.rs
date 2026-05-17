@@ -1,3 +1,4 @@
+use crate::battle_selection::BattleSelectionInferer;
 use crate::capture::{CaptureConfig, OpenCvFrameSource};
 use crate::recognition::RecognitionRuntimePort;
 use crate::services::DesktopAppServices;
@@ -48,7 +49,8 @@ impl DesktopComposition {
         );
 
         let repositories = DesktopRepositories::load(&app_paths)?;
-        RuntimeBootstrap::start(&app_paths, repositories.usage_repo.clone(), debug_mode)?;
+        let battle_selection_inferer =
+            RuntimeBootstrap::start(&app_paths, repositories.usage_repo.clone(), debug_mode)?;
 
         Ok(Self {
             app_services: DesktopAppServices::new(
@@ -56,6 +58,7 @@ impl DesktopComposition {
                 repositories.party_repo,
                 repositories.usage_fetcher,
                 repositories.usage_repo,
+                battle_selection_inferer,
             ),
         })
     }
@@ -126,7 +129,7 @@ impl RuntimeBootstrap {
         app_paths: &AppPaths,
         usage_repo: Arc<dyn UsageRepository>,
         debug_mode: bool,
-    ) -> Result<()> {
+    ) -> Result<Option<Arc<BattleSelectionInferer>>> {
         let _span = tracing::info_span!("runtime_bootstrap").entered();
         let capture_config = CaptureConfig::default();
         tracing::info!(
@@ -145,8 +148,11 @@ impl RuntimeBootstrap {
             .preview_max_width(1920)
             .preview_target_fps(60);
 
-        if let Some(recognition_port) = build_recognition_port(app_paths, usage_repo, debug_mode) {
-            builder = builder.recognition_port(recognition_port);
+        let mut battle_selection_inferer = None;
+
+        if let Some(components) = build_recognition_components(app_paths, usage_repo, debug_mode) {
+            battle_selection_inferer = Some(components.battle_selection_inferer.clone());
+            builder = builder.recognition_port(components.recognition_port);
         } else {
             tracing::warn!("recognition runtime disabled because model initialization failed");
         }
@@ -162,15 +168,20 @@ impl RuntimeBootstrap {
 
         spawn_runtime_workers(command_sender, workers);
         tracing::info!("runtime bootstrap completed");
-        Ok(())
+        Ok(battle_selection_inferer)
     }
 }
 
-fn build_recognition_port(
+struct RecognitionComponents {
+    recognition_port: Box<dyn RecognitionPort>,
+    battle_selection_inferer: Arc<BattleSelectionInferer>,
+}
+
+fn build_recognition_components(
     app_paths: &AppPaths,
     usage_repo: Arc<dyn UsageRepository>,
     debug_mode: bool,
-) -> Option<Box<dyn RecognitionPort>> {
+) -> Option<RecognitionComponents> {
     let onnx_path = app_paths.model_dir.join("dinov2_vits14.onnx");
     let ocr_model_dir = app_paths.model_dir.join("manga-ocr");
     let master_img_dir = app_paths.pokemon_images_dir.clone();
@@ -192,7 +203,7 @@ fn build_recognition_port(
     };
 
     let party_identifier = match OnnxPartyIdentifier::new(&onnx_path, &master_img_dir) {
-        Ok(identifier) => identifier,
+        Ok(identifier) => Arc::new(identifier),
         Err(error) => {
             tracing::warn!(
                 %error,
@@ -202,15 +213,22 @@ fn build_recognition_port(
         }
     };
 
-    let cropper = OpenCvCropper::with_debug_party_slot_dump(debug_mode);
+    let cropper = Arc::new(OpenCvCropper::with_debug_party_slot_dump(debug_mode));
+    let battle_selection_inferer = Arc::new(BattleSelectionInferer::new(
+        party_identifier.clone(),
+        cropper.clone(),
+    ));
     tracing::info!("recognition runtime initialized");
 
-    Some(Box::new(RecognitionRuntimePort::new(
-        ocr_engine,
-        party_identifier,
-        cropper,
-        usage_repo,
-    )))
+    Some(RecognitionComponents {
+        recognition_port: Box::new(RecognitionRuntimePort::new(
+            ocr_engine,
+            party_identifier,
+            cropper,
+            usage_repo,
+        )),
+        battle_selection_inferer,
+    })
 }
 
 fn spawn_runtime_workers(command_sender: CommandSender, workers: RuntimeWorkers) {

@@ -3,6 +3,7 @@ use super::pokemon::{
     FieldType, PokemonState, PokemonView, SuggestionRequest, editor_input_ids, restore_input_ids,
 };
 use super::subscriptions::{self, RuntimeMessage};
+use crate::battle_selection::{BattleSelectionCandidate, BattleSelectionObservation};
 use crate::services::{DesktopAppServices, SuggestionKind};
 use champions_application::use_cases::{
     BattleOutcome, BuildSelectionSupportResult, KoSummary, OpponentSelectionInput,
@@ -15,6 +16,7 @@ use champions_interface::{
 };
 use champions_runtime::PreviewFrame;
 use iced::advanced::widget as advanced_widget;
+use std::collections::HashMap;
 use iced::event;
 use iced::keyboard::{self, key};
 use iced::widget::Id as WidgetId;
@@ -88,6 +90,61 @@ struct RestoreWindowState {
     feedback: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct BattleSelectionState {
+    my_confirmed: Vec<String>,
+    opponent_confirmed: Vec<String>,
+    my_seen_counts: HashMap<String, u8>,
+    opponent_seen_counts: HashMap<String, u8>,
+    inference_in_flight: bool,
+    last_inference_timestamp_millis: Option<u64>,
+}
+
+impl BattleSelectionState {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn register_observation(&mut self, observation: BattleSelectionObservation) {
+        if let Some(candidate) = observation.my_pokemon {
+            Self::register_candidate(
+                &mut self.my_confirmed,
+                &mut self.my_seen_counts,
+                candidate,
+            );
+        }
+
+        if let Some(candidate) = observation.opponent_pokemon {
+            Self::register_candidate(
+                &mut self.opponent_confirmed,
+                &mut self.opponent_seen_counts,
+                candidate,
+            );
+        }
+    }
+
+    fn register_candidate(
+        confirmed: &mut Vec<String>,
+        seen_counts: &mut HashMap<String, u8>,
+        candidate: BattleSelectionCandidate,
+    ) {
+        if confirmed.iter().any(|name| name == &candidate.name) {
+            return;
+        }
+
+        let next_count = seen_counts
+            .entry(candidate.name.clone())
+            .and_modify(|count| *count = count.saturating_add(1))
+            .or_insert(1);
+
+        if candidate.is_high_confidence || *next_count >= 2 {
+            if confirmed.len() < 3 {
+                confirmed.push(candidate.name);
+            }
+        }
+    }
+}
+
 pub struct PokeEditorApp {
     pokemons: [PokemonState; 6],
     pokemon_feedbacks: [Option<String>; 6],
@@ -104,6 +161,8 @@ pub struct PokeEditorApp {
     editor_status: Option<String>,
     selection_support: Option<BuildSelectionSupportResult>,
     selection_support_status: Option<String>,
+    battle_selection: BattleSelectionState,
+    battle_selection_generation: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +189,10 @@ pub enum Message {
     },
     RuntimeMsg(RuntimeMessage),
     RuntimeCommandSent(Result<(), String>),
+    BattleSelectionInferenceCompleted {
+        generation: u64,
+        result: Result<BattleSelectionObservation, String>,
+    },
     WindowClosed(window::Id),
     RefreshUsageData,
     UsageDataRefreshed(Result<usize, String>),
@@ -191,6 +254,8 @@ impl PokeEditorApp {
                 editor_status,
                 selection_support: None,
                 selection_support_status: None,
+                battle_selection: BattleSelectionState::default(),
+                battle_selection_generation: 0,
             },
             Task::batch([main_task.discard(), preview_task.discard()]),
         )
@@ -254,10 +319,14 @@ impl PokeEditorApp {
             }
             Message::ManualSelectionScanRequested => {
                 self.match_phase = MatchPhase::PokemonSelection;
+                self.reset_battle_selection();
                 return Self::send_runtime_command(RuntimeCommand::ScanOpponentSelection);
             }
             Message::MatchPhaseSelected(phase) => {
                 self.match_phase = phase;
+                if matches!(phase, MatchPhase::Other | MatchPhase::PokemonSelection) {
+                    self.reset_battle_selection();
+                }
                 tracing::info!(?phase, "manual match phase selected");
                 return Self::send_runtime_command(RuntimeCommand::SetMatchPhase(phase));
             }
@@ -293,10 +362,26 @@ impl PokeEditorApp {
             }
             Message::RuntimeMsg(runtime_msg) => match runtime_msg {
                 RuntimeMessage::PreviewFrameReceived(frame) => {
-                    self.latest_preview = Some(frame);
+                    self.latest_preview = Some(frame.clone());
+                    return self.maybe_request_battle_selection_inference(&frame);
                 }
                 RuntimeMessage::RuntimeEventReceived(event) => {
                     self.handle_runtime_event(event);
+                }
+            },
+            Message::BattleSelectionInferenceCompleted { generation, result } => {
+                if generation != self.battle_selection_generation {
+                    return Task::none();
+                }
+
+                self.battle_selection.inference_in_flight = false;
+                match result {
+                    Ok(observation) => {
+                        self.battle_selection.register_observation(observation);
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "battle selection inference failed");
+                    }
                 }
             },
             Message::WindowClosed(id) => {
@@ -493,6 +578,7 @@ impl PokeEditorApp {
                     conflict_count = party.conflicts.len(),
                     "opponent party received by UI",
                 );
+                self.reset_battle_selection();
                 self.opponent_party = Some(OpponentPartyState::from_view(party));
                 self.active_tab = Tab::BattleSupport;
                 self.refresh_selection_support();
@@ -500,6 +586,9 @@ impl PokeEditorApp {
             RuntimeEvent::MatchPhaseChanged { phase, .. } => {
                 tracing::debug!(?phase, "runtime match phase changed");
                 self.match_phase = phase;
+                if matches!(phase, MatchPhase::Other | MatchPhase::PokemonSelection) {
+                    self.reset_battle_selection();
+                }
             }
             RuntimeEvent::RecognitionStatusChanged {
                 status: champions_interface::RecognitionStatus::Stopped,
@@ -507,9 +596,11 @@ impl PokeEditorApp {
             } => {
                 tracing::info!("recognition stopped");
                 self.match_phase = MatchPhase::Other;
+                self.reset_battle_selection();
             }
             RuntimeEvent::RuntimeStopped { .. } => {
                 self.match_phase = MatchPhase::Other;
+                self.reset_battle_selection();
                 tracing::info!("runtime stopped");
             }
             RuntimeEvent::Error { error, .. } => {
@@ -722,6 +813,7 @@ impl PokeEditorApp {
             }
         }
 
+        self.reset_battle_selection();
         self.refresh_selection_support();
     }
 
@@ -736,6 +828,7 @@ impl PokeEditorApp {
             }
         }
 
+        self.reset_battle_selection();
         self.refresh_selection_support();
     }
 
@@ -765,7 +858,100 @@ impl PokeEditorApp {
         }
     }
 
+    fn reset_battle_selection(&mut self) {
+        self.battle_selection_generation = self.battle_selection_generation.saturating_add(1);
+        self.battle_selection.reset();
+    }
 
+    fn battle_my_candidate_names(&self) -> Vec<String> {
+        let mut candidates = Vec::new();
+
+        for build in self.current_party_builds() {
+            let name = build.species_name.trim();
+            if name.is_empty() || candidates.iter().any(|candidate| candidate == name) {
+                continue;
+            }
+            candidates.push(name.to_string());
+        }
+
+        candidates
+    }
+
+    fn battle_opponent_candidate_names(&self) -> Vec<String> {
+        let Some(opponent_party) = self.opponent_party.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut candidates = Vec::new();
+        for pokemon in &opponent_party.pokemons {
+            let name = pokemon.input_name.trim();
+            if name.is_empty() || candidates.iter().any(|candidate| candidate == name) {
+                continue;
+            }
+            candidates.push(name.to_string());
+        }
+
+        candidates
+    }
+
+    fn maybe_request_battle_selection_inference(&mut self, frame: &PreviewFrame) -> Task<Message> {
+        if self.active_tab != Tab::BattleSupport
+            || self.match_phase != MatchPhase::Battle
+            || self.battle_selection.inference_in_flight
+            || !self.services.can_infer_battle_selection()
+        {
+            return Task::none();
+        }
+
+        if self.battle_selection.my_confirmed.len() >= 3
+            && self.battle_selection.opponent_confirmed.len() >= 3
+        {
+            return Task::none();
+        }
+
+        if let Some(last_timestamp) = self.battle_selection.last_inference_timestamp_millis {
+            if frame.timestamp_millis.saturating_sub(last_timestamp) < 500 {
+                return Task::none();
+            }
+        }
+
+        let my_candidates = self.battle_my_candidate_names();
+        let opponent_candidates = self.battle_opponent_candidate_names();
+        if my_candidates.is_empty() && opponent_candidates.is_empty() {
+            return Task::none();
+        }
+
+        self.battle_selection.inference_in_flight = true;
+        self.battle_selection.last_inference_timestamp_millis = Some(frame.timestamp_millis);
+
+        let generation = self.battle_selection_generation;
+        let services = self.services.clone();
+        let width = frame.width;
+        let height = frame.height;
+        let pixel_format = frame.pixel_format;
+        let pixels = frame.pixels.clone();
+
+        Task::perform(
+            async move {
+                match tokio::task::spawn_blocking(move || {
+                    services.infer_battle_selection(
+                        width,
+                        height,
+                        pixel_format,
+                        pixels.as_ref(),
+                        my_candidates,
+                        opponent_candidates,
+                    )
+                })
+                .await
+                {
+                    Ok(result) => result,
+                    Err(error) => Err(error.to_string()),
+                }
+            },
+            move |result| Message::BattleSelectionInferenceCompleted { generation, result },
+        )
+    }
 
     fn current_party_builds(&self) -> Vec<PokemonBuild> {
         self.pokemons.iter().map(PokemonState::to_build).collect()
@@ -1273,6 +1459,7 @@ impl PokeEditorApp {
                 ]
                 .spacing(20);
                 content = content.push(table);
+                content = content.push(battle_selection_matrix_view(&self.battle_selection));
 
                 scrollable(content).into()
             }
@@ -1442,7 +1629,91 @@ fn format_winning_pokemon_list(matchups: &[PokemonMatchupSupport]) -> String {
     }
 }
 
+fn battle_selection_matrix_view(state: &BattleSelectionState) -> Element<'_, Message> {
+    let enemy_headers = (0..3)
+        .map(|index| {
+            state
+                .opponent_confirmed
+                .get(index)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>();
+    let my_headers = (0..3)
+        .map(|index| state.my_confirmed.get(index).cloned().unwrap_or_default())
+        .collect::<Vec<_>>();
 
+    let header_row = row![
+        battle_selection_matrix_cell("選出".to_string(), true),
+        battle_selection_matrix_cell(enemy_headers[0].clone(), true),
+        battle_selection_matrix_cell(enemy_headers[1].clone(), true),
+        battle_selection_matrix_cell(enemy_headers[2].clone(), true),
+    ]
+    .spacing(8);
+
+    let row1 = row![
+        battle_selection_matrix_cell(my_headers[0].clone(), true),
+        battle_selection_matrix_cell(String::new(), false),
+        battle_selection_matrix_cell(String::new(), false),
+        battle_selection_matrix_cell(String::new(), false),
+    ]
+    .spacing(8);
+    let row2 = row![
+        battle_selection_matrix_cell(my_headers[1].clone(), true),
+        battle_selection_matrix_cell(String::new(), false),
+        battle_selection_matrix_cell(String::new(), false),
+        battle_selection_matrix_cell(String::new(), false),
+    ]
+    .spacing(8);
+    let row3 = row![
+        battle_selection_matrix_cell(my_headers[2].clone(), true),
+        battle_selection_matrix_cell(String::new(), false),
+        battle_selection_matrix_cell(String::new(), false),
+        battle_selection_matrix_cell(String::new(), false),
+    ]
+    .spacing(8);
+
+    container(
+        column![
+            text("選出ポケモン対応表").font(JAPANESE_FONT).size(20),
+            header_row,
+            row1,
+            row2,
+            row3,
+        ]
+        .spacing(8),
+    )
+    .width(Length::Fill)
+    .into()
+}
+
+fn battle_selection_matrix_cell(content: String, is_header: bool) -> Element<'static, Message> {
+    let text_color = if is_header {
+        Color::from_rgb(0.15, 0.15, 0.15)
+    } else {
+        Color::from_rgb(0.4, 0.4, 0.4)
+    };
+
+    container(text(content).font(JAPANESE_FONT).size(14).color(text_color))
+        .width(Length::Fixed(180.0))
+        .height(Length::Fixed(56.0))
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .style(move |_| container::Style {
+            border: Border {
+                color: Color::from_rgb(0.7, 0.7, 0.7),
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            background: Some(if is_header {
+                Color::from_rgb(0.95, 0.95, 0.95).into()
+            } else {
+                Color::WHITE.into()
+            }),
+            ..Default::default()
+        })
+        .into()
+}
 
 fn format_ko_summary(summary: &KoSummary) -> String {
     match summary {

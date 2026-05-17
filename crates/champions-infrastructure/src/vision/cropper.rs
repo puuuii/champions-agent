@@ -21,10 +21,13 @@ struct CropRect {
     height: u32,
 }
 
+#[derive(Clone)]
 pub struct OpenCvCropper {
     opponent_config: CropConfig,
     ocr_config: CropConfig,
     battle_result_config: CropConfig,
+    battle_opponent_config: CropConfig,
+    battle_my_config: CropConfig,
     save_debug_party_slots: bool,
 }
 
@@ -56,6 +59,20 @@ impl OpenCvCropper {
                 y_gap: 0.0,
                 size_w: 0.13,
                 width_ratio: 6.0,
+            },
+            battle_opponent_config: CropConfig {
+                center_x: 0.875,
+                y_start: 0.12,
+                y_gap: 0.0,
+                size_w: 0.07,
+                width_ratio: 2.8,
+            },
+            battle_my_config: CropConfig {
+                center_x: 0.12,
+                y_start: 0.92,
+                y_gap: 0.0,
+                size_w: 0.06,
+                width_ratio: 3.5,
             },
             save_debug_party_slots,
         }
@@ -143,6 +160,33 @@ impl OpenCvCropper {
         } else {
             1
         }
+    }
+
+    fn crop_slot_image(
+        &self,
+        frame_width: u32,
+        frame_height: u32,
+        frame_bytes: &[u8],
+        config: &CropConfig,
+        index: usize,
+        slot: SelectionSlot,
+    ) -> Option<SlotImage> {
+        let channels = self.detect_channels(frame_width, frame_height, frame_bytes);
+        let (rgb_bytes, width, height) = self.crop_region(
+            frame_width,
+            frame_height,
+            frame_bytes,
+            channels,
+            config,
+            index,
+        )?;
+
+        Some(SlotImage {
+            slot,
+            width,
+            height,
+            rgb_bytes,
+        })
     }
 
     fn ensure_debug_output_dir(&self) -> Option<&'static Path> {
@@ -269,6 +313,33 @@ impl OpenCvCropper {
         }
     }
 
+    fn save_named_debug_image(&self, file_name: &str, width: u32, height: u32, rgb_bytes: &[u8]) {
+        let Some(output_dir) = self.ensure_debug_output_dir() else {
+            return;
+        };
+
+        let Some(image) = RgbImage::from_raw(width, height, rgb_bytes.to_vec()) else {
+            tracing::warn!(
+                file_name,
+                width,
+                height,
+                bytes = rgb_bytes.len(),
+                "failed to build crop debug image",
+            );
+            return;
+        };
+
+        let path = output_dir.join(file_name);
+        if let Err(error) = image.save(&path) {
+            tracing::warn!(
+                file_name,
+                path = %path.display(),
+                %error,
+                "failed to save crop debug image",
+            );
+        }
+    }
+
     fn save_party_slot_debug_image(
         &self,
         slot_index: usize,
@@ -276,30 +347,12 @@ impl OpenCvCropper {
         height: u32,
         rgb_bytes: &[u8],
     ) {
-        let Some(output_dir) = self.ensure_debug_output_dir() else {
-            return;
-        };
-
-        let Some(image) = RgbImage::from_raw(width, height, rgb_bytes.to_vec()) else {
-            tracing::warn!(
-                slot = slot_index + 1,
-                width,
-                height,
-                bytes = rgb_bytes.len(),
-                "failed to build opponent crop debug image",
-            );
-            return;
-        };
-
-        let path = output_dir.join(format!("opp_poke{}.png", slot_index + 1));
-        if let Err(error) = image.save(&path) {
-            tracing::warn!(
-                slot = slot_index + 1,
-                path = %path.display(),
-                %error,
-                "failed to save opponent crop debug image",
-            );
-        }
+        self.save_named_debug_image(
+            &format!("opp_poke{}.png", slot_index + 1),
+            width,
+            height,
+            rgb_bytes,
+        );
     }
 
     fn log_party_slot_debug(
@@ -323,6 +376,56 @@ impl OpenCvCropper {
             crop_height = rect.height,
             "opponent crop debug",
         );
+    }
+
+    pub fn extract_battle_opponent_pokemon(
+        &self,
+        frame_width: u32,
+        frame_height: u32,
+        frame_bytes: &[u8],
+    ) -> Option<SlotImage> {
+        let slot = self.crop_slot_image(
+            frame_width,
+            frame_height,
+            frame_bytes,
+            &self.battle_opponent_config,
+            0,
+            SelectionSlot(0),
+        )?;
+
+        self.save_named_debug_image(
+            "battle_enemy_pokemon.png",
+            slot.width,
+            slot.height,
+            &slot.rgb_bytes,
+        );
+
+        Some(slot)
+    }
+
+    pub fn extract_battle_my_pokemon(
+        &self,
+        frame_width: u32,
+        frame_height: u32,
+        frame_bytes: &[u8],
+    ) -> Option<SlotImage> {
+        let slot = self.crop_slot_image(
+            frame_width,
+            frame_height,
+            frame_bytes,
+            &self.battle_my_config,
+            0,
+            SelectionSlot(1),
+        )?;
+
+        self.save_named_debug_image(
+            "battle_my_pokemon.png",
+            slot.width,
+            slot.height,
+            &slot.rgb_bytes,
+        );
+
+        Some(slot)
     }
 }
 

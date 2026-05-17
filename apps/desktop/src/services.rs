@@ -1,3 +1,6 @@
+use crate::battle_selection::{
+    BattleSelectionCandidate, BattleSelectionInferer, BattleSelectionObservation,
+};
 use champions_application::ports::{
     CatalogRepository, PartyRepository, UsageFetcher, UsageRepository, UsageSource,
 };
@@ -16,6 +19,7 @@ use champions_interface::{
     PokemonUsageSummaryView,
 };
 use std::sync::Arc;
+use champions_runtime::PixelFormat;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +49,7 @@ pub struct DesktopAppServices {
     party_repo: Arc<dyn PartyRepository>,
     usage_fetcher: Arc<dyn UsageFetcher>,
     usage_repo: Arc<dyn UsageRepository>,
+    battle_selection_inferer: Option<Arc<BattleSelectionInferer>>,
 }
 
 impl DesktopAppServices {
@@ -53,12 +58,14 @@ impl DesktopAppServices {
         party_repo: Arc<dyn PartyRepository>,
         usage_fetcher: Arc<dyn UsageFetcher>,
         usage_repo: Arc<dyn UsageRepository>,
+        battle_selection_inferer: Option<Arc<BattleSelectionInferer>>,
     ) -> Self {
         Self {
             catalog_repo,
             party_repo,
             usage_fetcher,
             usage_repo,
+            battle_selection_inferer,
         }
     }
 
@@ -187,6 +194,33 @@ impl DesktopAppServices {
                 Err(error.to_string())
             }
         }
+    }
+
+    pub fn can_infer_battle_selection(&self) -> bool {
+        self.battle_selection_inferer.is_some()
+    }
+
+    pub fn infer_battle_selection(
+        &self,
+        frame_width: u32,
+        frame_height: u32,
+        pixel_format: PixelFormat,
+        frame_bytes: &[u8],
+        my_candidates: Vec<String>,
+        opponent_candidates: Vec<String>,
+    ) -> Result<BattleSelectionObservation, String> {
+        let Some(inferer) = self.battle_selection_inferer.as_ref() else {
+            return Ok(BattleSelectionObservation::default());
+        };
+
+        inferer.infer_from_frame(
+            frame_width,
+            frame_height,
+            pixel_format,
+            frame_bytes,
+            &my_candidates,
+            &opponent_candidates,
+        )
     }
 }
 

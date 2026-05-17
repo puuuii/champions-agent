@@ -14,8 +14,8 @@ use champions_runtime::RecognitionPort;
 
 pub struct RecognitionRuntimePort {
     ocr_engine: MangaOcrEngine,
-    party_identifier: OnnxPartyIdentifier,
-    image_extractor: OpenCvCropper,
+    party_identifier: Arc<OnnxPartyIdentifier>,
+    image_extractor: Arc<OpenCvCropper>,
     usage_repo: Arc<dyn UsageRepository>,
     recognition_config: RecognitionConfig,
 }
@@ -23,8 +23,8 @@ pub struct RecognitionRuntimePort {
 impl RecognitionRuntimePort {
     pub fn new(
         ocr_engine: MangaOcrEngine,
-        party_identifier: OnnxPartyIdentifier,
-        image_extractor: OpenCvCropper,
+        party_identifier: Arc<OnnxPartyIdentifier>,
+        image_extractor: Arc<OpenCvCropper>,
         usage_repo: Arc<dyn UsageRepository>,
     ) -> Self {
         Self {
@@ -60,8 +60,10 @@ impl RecognitionPort for RecognitionRuntimePort {
         &self,
         images: PartyImageSet,
     ) -> Result<OpponentPartyIdentificationResult, String> {
-        let use_case =
-            IdentifyOpponentPartyUseCase::new(&self.party_identifier, self.usage_repo.as_ref());
+        let use_case = IdentifyOpponentPartyUseCase::new(
+            self.party_identifier.as_ref(),
+            self.usage_repo.as_ref(),
+        );
         use_case
             .execute(IdentifyOpponentPartyCommand {
                 party_images: images,

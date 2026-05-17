@@ -1,3 +1,4 @@
+mod battle_selection;
 mod capture;
 mod composition;
 mod observability;

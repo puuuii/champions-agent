@@ -149,6 +149,95 @@ impl OnnxPartyIdentifier {
         scores.truncate(top_n);
         scores
     }
+
+    fn find_top_matches_in_candidates(
+        &self,
+        query: &Array1<f32>,
+        candidate_indices: &[usize],
+        top_n: usize,
+    ) -> Vec<(usize, f32)> {
+        let mut scores: Vec<(usize, f32)> = candidate_indices
+            .iter()
+            .copied()
+            .map(|index| (index, query.dot(&self.master_embeddings[index])))
+            .collect();
+        scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scores.truncate(top_n.min(scores.len()));
+        scores
+    }
+
+    fn embedding_from_slot_image(
+        &self,
+        slot_image: &SlotImage,
+    ) -> Result<Option<Array1<f32>>, PartyIdentifierError> {
+        if slot_image.rgb_bytes.is_empty() || slot_image.width == 0 || slot_image.height == 0 {
+            return Ok(None);
+        }
+
+        let Some(rgb) = RgbImage::from_raw(
+            slot_image.width,
+            slot_image.height,
+            slot_image.rgb_bytes.clone(),
+        ) else {
+            return Ok(None);
+        };
+
+        let tensor = preprocess_single(&DynamicImage::ImageRgb8(rgb));
+        let embedding = self.run_single_embedding(tensor)?;
+        Ok(Some(l2_normalize(embedding)))
+    }
+
+    pub fn identify_from_candidate_names(
+        &self,
+        slot_image: &SlotImage,
+        candidate_names: &[String],
+        config: &RecognitionConfig,
+    ) -> Result<Option<RecognizedPokemon>, PartyIdentifierError> {
+        let candidate_indices = candidate_names
+            .iter()
+            .filter_map(|candidate_name| self.master_names.iter().position(|name| name == candidate_name))
+            .collect::<Vec<_>>();
+
+        if candidate_indices.is_empty() {
+            return Ok(None);
+        }
+
+        let Some(embedding) = self.embedding_from_slot_image(slot_image)? else {
+            return Ok(None);
+        };
+
+        let top_matches = self.find_top_matches_in_candidates(
+            &embedding,
+            &candidate_indices,
+            config.top_candidates,
+        );
+        let best_match = top_matches.first();
+
+        let best_score = best_match.map(|(_, score)| *score).unwrap_or(0.0);
+        let confidence = ConfidenceScore::from_score(
+            best_score,
+            HIGH_CONFIDENCE_THRESHOLD,
+            LOW_CONFIDENCE_THRESHOLD,
+        );
+        let display_name = best_match.map(|(index, _)| self.master_names[*index].clone());
+        let species_id = best_match.map(|(index, _)| SpeciesId(*index as u32));
+        let candidates = top_matches
+            .iter()
+            .map(|(index, score)| RecognitionCandidate {
+                species_id: Some(SpeciesId(*index as u32)),
+                display_name: self.master_names[*index].clone(),
+                score: *score,
+            })
+            .collect();
+
+        Ok(Some(RecognizedPokemon {
+            slot: slot_image.slot,
+            species_id,
+            display_name,
+            confidence,
+            candidates,
+        }))
+    }
 }
 
 impl PartyIdentifier for OnnxPartyIdentifier {
