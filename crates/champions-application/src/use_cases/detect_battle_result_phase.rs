@@ -1,7 +1,7 @@
 use crate::ports::ocr_engine::{OcrEngine, OcrError, OcrImage};
 
-const WIN_KEYWORDS: &[&str] = &["WIN"];
-const LOSE_KEYWORDS: &[&str] = &["LOSE"];
+const RESULT_PHASE_HINT_CHARS: &[char] = &['W', 'I', 'N', 'L', 'O', 'S', 'E'];
+const MIN_RESULT_PHASE_HINT_MATCHES: usize = 3;
 
 pub struct DetectBattleResultPhaseCommand {
     pub target_text_image: OcrImage,
@@ -27,8 +27,12 @@ impl<'a> DetectBattleResultPhaseUseCase<'a> {
 
 fn is_battle_result_phase_text(raw_text: &str) -> bool {
     let normalized = normalize_ocr_text(raw_text).to_uppercase();
-    WIN_KEYWORDS.iter().any(|kw| normalized.contains(kw))
-        || LOSE_KEYWORDS.iter().any(|kw| normalized.contains(kw))
+
+    RESULT_PHASE_HINT_CHARS
+        .iter()
+        .filter(|&&ch| normalized.contains(ch))
+        .count()
+        >= MIN_RESULT_PHASE_HINT_MATCHES
 }
 
 fn normalize_ocr_text(raw_text: &str) -> String {

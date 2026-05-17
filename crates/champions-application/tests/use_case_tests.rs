@@ -640,6 +640,34 @@ fn detect_battle_result_phase_accepts_lose_text() {
 }
 
 #[test]
+fn detect_battle_result_phase_accepts_text_with_three_hint_chars() {
+    let ocr = FakeOcrEngine::new("W x I x N");
+    let uc = DetectBattleResultPhaseUseCase::new(&ocr);
+
+    let result = uc
+        .execute(DetectBattleResultPhaseCommand {
+            target_text_image: sample_ocr_image(),
+        })
+        .unwrap();
+
+    assert!(result);
+}
+
+#[test]
+fn detect_battle_result_phase_rejects_text_with_only_two_hint_chars() {
+    let ocr = FakeOcrEngine::new("W I");
+    let uc = DetectBattleResultPhaseUseCase::new(&ocr);
+
+    let result = uc
+        .execute(DetectBattleResultPhaseCommand {
+            target_text_image: sample_ocr_image(),
+        })
+        .unwrap();
+
+    assert!(!result);
+}
+
+#[test]
 fn detect_battle_result_phase_rejects_other_text() {
     let ocr = FakeOcrEngine::new("ターン 3");
     let uc = DetectBattleResultPhaseUseCase::new(&ocr);
