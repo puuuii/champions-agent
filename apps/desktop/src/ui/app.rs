@@ -6,7 +6,7 @@ use super::subscriptions::{self, RuntimeMessage};
 use crate::battle_selection::{BattleSelectionCandidate, BattleSelectionObservation};
 use crate::services::{DesktopAppServices, SuggestionKind};
 use champions_application::use_cases::{
-    BattleOutcome, BuildSelectionSupportResult, KoSummary, OpponentSelectionInput,
+    BattleOutcome, BuildSelectionSupportResult, OpponentSelectionInput,
     OpponentSelectionSupport, PokemonMatchupSupport,
 };
 use champions_domain::party::{PokemonBuild, SavedParty};
@@ -1720,24 +1720,4 @@ fn battle_selection_matrix_cell(content: String, is_header: bool) -> Element<'st
             ..Default::default()
         })
         .into()
-}
-
-fn format_ko_summary(summary: &KoSummary) -> String {
-    match summary {
-        KoSummary::OneHit { chance_percent } => {
-            format!("1発 {}", format_percent(*chance_percent))
-        }
-        KoSummary::TwoHit { chance_percent } => {
-            format!("2発 {}", format_percent(*chance_percent))
-        }
-        KoSummary::MoreThanTwo => "2発圏外".to_string(),
-    }
-}
-
-fn format_percent(value: f32) -> String {
-    if (value - value.round()).abs() < 0.05 {
-        format!("{value:.0}%")
-    } else {
-        format!("{value:.1}%")
-    }
 }

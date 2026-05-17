@@ -1,5 +1,5 @@
 use crate::battle_selection::{
-    BattleSelectionCandidate, BattleSelectionInferer, BattleSelectionObservation,
+    BattleSelectionInferer, BattleSelectionObservation,
 };
 use champions_application::ports::{
     CatalogRepository, PartyRepository, UsageFetcher, UsageRepository, UsageSource,

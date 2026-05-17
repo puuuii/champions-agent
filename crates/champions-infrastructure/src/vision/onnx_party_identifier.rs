@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use champions_application::{
-    PartyIdentifier, PartyIdentifierError, PartyImageSet, RecognitionConfig,
+    PartyIdentifier, PartyIdentifierError, PartyImageSet, RecognitionConfig, SlotImage,
 };
 use champions_domain::recognition::{
     ConfidenceScore, RecognitionCandidate, RecognizedParty, RecognizedPokemon, SpeciesId,
