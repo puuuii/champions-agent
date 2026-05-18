@@ -6,8 +6,8 @@ use super::subscriptions::{self, RuntimeMessage};
 use crate::battle_selection::{BattleSelectionCandidate, BattleSelectionObservation};
 use crate::services::{DesktopAppServices, SuggestionKind};
 use champions_application::use_cases::{
-    BattleOutcome, BuildSelectionSupportResult, OpponentSelectionInput,
-    OpponentSelectionSupport, PokemonMatchupSupport,
+    BattleOutcome, BuildSelectionSupportResult, OpponentSelectionInput, OpponentSelectionSupport,
+    PokemonMatchupSupport,
 };
 use champions_domain::party::{PokemonBuild, SavedParty};
 use champions_interface::{
@@ -16,7 +16,6 @@ use champions_interface::{
 };
 use champions_runtime::PreviewFrame;
 use iced::advanced::widget as advanced_widget;
-use std::collections::HashMap;
 use iced::event;
 use iced::keyboard::{self, key};
 use iced::widget::Id as WidgetId;
@@ -26,6 +25,7 @@ use iced::{
     Border, Color, Element, Length, Rectangle, Size, Subscription, Task,
     widget::{button, column, container, row, scrollable, text, text_input},
 };
+use std::collections::HashMap;
 
 use super::JAPANESE_FONT;
 
@@ -107,11 +107,7 @@ impl BattleSelectionState {
 
     fn register_observation(&mut self, observation: BattleSelectionObservation) {
         if let Some(candidate) = observation.my_pokemon {
-            Self::register_candidate(
-                &mut self.my_confirmed,
-                &mut self.my_seen_counts,
-                candidate,
-            );
+            Self::register_candidate(&mut self.my_confirmed, &mut self.my_seen_counts, candidate);
         }
 
         if let Some(candidate) = observation.opponent_pokemon {
@@ -389,7 +385,7 @@ impl PokeEditorApp {
                         tracing::warn!(%error, "battle selection inference failed");
                     }
                 }
-            },
+            }
             Message::WindowClosed(id) => {
                 if self.preview_window_id == Some(id) {
                     self.preview_window_id = None;
@@ -1290,10 +1286,14 @@ impl PokeEditorApp {
                 for (index, pokemon) in party.pokemons.iter().enumerate() {
                     let usage = pokemon.usage.as_ref();
 
-                    let mut name_cell = column![text_input("相手ポケモン名", &pokemon.input_name)
-                        .on_input(move |value| Message::OpponentPokemonNameChanged(index, value))
-                        .font(JAPANESE_FONT)
-                        .width(Length::Fill),]
+                    let mut name_cell = column![
+                        text_input("相手ポケモン名", &pokemon.input_name)
+                            .on_input(move |value| Message::OpponentPokemonNameChanged(
+                                index, value
+                            ))
+                            .font(JAPANESE_FONT)
+                            .width(Length::Fill),
+                    ]
                     .spacing(6);
 
                     if !pokemon.suggestions.is_empty() {
@@ -1428,12 +1428,8 @@ impl PokeEditorApp {
                             }
                         });
                     winning_row = winning_row.push(
-                        container(
-                            text(winning_list)
-                                .font(JAPANESE_FONT)
-                                .size(12),
-                        )
-                        .width(Length::FillPortion(1)),
+                        container(text(winning_list).font(JAPANESE_FONT).size(12))
+                            .width(Length::FillPortion(1)),
                     );
                 }
 

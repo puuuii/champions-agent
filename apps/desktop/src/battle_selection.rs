@@ -25,10 +25,7 @@ pub struct BattleSelectionInferer {
 }
 
 impl BattleSelectionInferer {
-    pub fn new(
-        party_identifier: Arc<OnnxPartyIdentifier>,
-        cropper: Arc<OpenCvCropper>,
-    ) -> Self {
+    pub fn new(party_identifier: Arc<OnnxPartyIdentifier>, cropper: Arc<OpenCvCropper>) -> Self {
         Self {
             party_identifier,
             cropper,
@@ -76,11 +73,7 @@ impl BattleSelectionInferer {
 
         let recognized = self
             .party_identifier
-            .identify_from_candidate_names(
-                &slot_image,
-                candidate_names,
-                &self.recognition_config,
-            )
+            .identify_from_candidate_names(&slot_image, candidate_names, &self.recognition_config)
             .map_err(|error| error.to_string())?;
 
         Ok(recognized.and_then(map_recognized_candidate))

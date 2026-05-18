@@ -202,7 +202,7 @@ fn build_recognition_components(
         }
     };
 
-    let party_identifier = match OnnxPartyIdentifier::new(&onnx_path, &master_img_dir) {
+    let party_identifier = match OnnxPartyIdentifier::new(&onnx_path, &master_img_dir, debug_mode) {
         Ok(identifier) => Arc::new(identifier),
         Err(error) => {
             tracing::warn!(

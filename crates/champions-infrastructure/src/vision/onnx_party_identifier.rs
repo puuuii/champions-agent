@@ -1,5 +1,6 @@
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, TryLockError};
+use std::time::{Duration, Instant};
 
 use champions_application::{
     PartyIdentifier, PartyIdentifierError, PartyImageSet, RecognitionConfig, SlotImage,
@@ -26,18 +27,21 @@ pub struct OnnxPartyIdentifier {
     session: Mutex<Session>,
     master_embeddings: Vec<Array1<f32>>,
     master_names: Vec<String>,
+    diagnostics_enabled: bool,
 }
 
 impl OnnxPartyIdentifier {
     pub fn new(
         onnx_path: impl AsRef<Path>,
         master_images_dir: impl AsRef<Path>,
+        diagnostics_enabled: bool,
     ) -> Result<Self, PartyIdentifierError> {
         let onnx_path = onnx_path.as_ref();
         let master_images_dir = master_images_dir.as_ref();
         tracing::info!(
             onnx_path = %onnx_path.display(),
             master_images_dir = %master_images_dir.display(),
+            diagnostics_enabled,
             "initializing ONNX party identifier",
         );
         let session = Session::builder()
@@ -61,6 +65,7 @@ impl OnnxPartyIdentifier {
             session: Mutex::new(session),
             master_embeddings: Vec::new(),
             master_names: Vec::new(),
+            diagnostics_enabled,
         };
 
         identifier.cache_master_data(master_images_dir)?;
@@ -108,7 +113,7 @@ impl OnnxPartyIdentifier {
             .collect();
 
         for (name, tensor) in processed_data {
-            let emb = self.run_single_embedding(tensor)?;
+            let emb = self.run_single_embedding("master_cache", tensor)?;
             self.master_embeddings.push(l2_normalize(emb));
             self.master_names.push(name);
         }
@@ -122,20 +127,86 @@ impl OnnxPartyIdentifier {
 
     fn run_single_embedding(
         &self,
+        operation: &'static str,
         tensor: Array3<f32>,
     ) -> Result<Array1<f32>, PartyIdentifierError> {
         let input = Tensor::from_array(tensor.insert_axis(Axis(0)))
             .map_err(|e| PartyIdentifierError::InferenceFailed(format!("tensor error: {e}")))?;
-        let mut session = self.session.lock().unwrap();
+
+        if self.diagnostics_enabled && operation != "master_cache" {
+            tracing::info!(operation = operation, "ONNX embedding request started");
+        }
+
+        let mut session = self.lock_session(operation);
+        if self.diagnostics_enabled && operation != "master_cache" {
+            tracing::info!(operation = operation, "ONNX session lock acquired");
+        }
+
+        let run_started_at = Instant::now();
         let outputs = session
             .run(ort::inputs!["pixel_values" => input])
             .map_err(|e| PartyIdentifierError::InferenceFailed(format!("run error: {e}")))?;
+        if self.diagnostics_enabled && operation != "master_cache" {
+            tracing::info!(
+                operation = operation,
+                elapsed_ms = run_started_at.elapsed().as_millis() as u64,
+                "ONNX session.run completed",
+            );
+        }
         let emb = outputs["embedding"]
             .try_extract_array::<f32>()
             .map_err(|e| PartyIdentifierError::InferenceFailed(format!("extract error: {e}")))?
             .slice(s![0, ..])
             .to_owned();
         Ok(emb)
+    }
+
+    fn lock_session(&self, operation: &'static str) -> MutexGuard<'_, Session> {
+        if !self.diagnostics_enabled {
+            return self.session.lock().unwrap();
+        }
+
+        let wait_started_at = Instant::now();
+        let mut last_wait_log_at = None;
+
+        loop {
+            match self.session.try_lock() {
+                Ok(guard) => {
+                    let waited = wait_started_at.elapsed();
+                    if waited >= Duration::from_millis(50) {
+                        tracing::info!(
+                            operation = operation,
+                            waited_ms = waited.as_millis() as u64,
+                            "ONNX session lock acquired after waiting",
+                        );
+                    }
+                    return guard;
+                }
+                Err(TryLockError::WouldBlock) => {
+                    let elapsed = wait_started_at.elapsed();
+                    let should_log = match last_wait_log_at {
+                        None => true,
+                        Some(last) => elapsed.saturating_sub(last) >= Duration::from_secs(1),
+                    };
+                    if should_log {
+                        tracing::warn!(
+                            operation = operation,
+                            waited_ms = elapsed.as_millis() as u64,
+                            "waiting for ONNX session lock",
+                        );
+                        last_wait_log_at = Some(elapsed);
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(TryLockError::Poisoned(poisoned)) => {
+                    tracing::warn!(
+                        operation = operation,
+                        "ONNX session mutex was poisoned; continuing with inner session",
+                    );
+                    return poisoned.into_inner();
+                }
+            }
+        }
     }
 
     fn find_top_matches(&self, query: &Array1<f32>, top_n: usize) -> Vec<(usize, f32)> {
@@ -183,7 +254,7 @@ impl OnnxPartyIdentifier {
         };
 
         let tensor = preprocess_single(&DynamicImage::ImageRgb8(rgb));
-        let embedding = self.run_single_embedding(tensor)?;
+        let embedding = self.run_single_embedding("battle_selection", tensor)?;
         Ok(Some(l2_normalize(embedding)))
     }
 
@@ -305,10 +376,21 @@ impl PartyIdentifier for OnnxPartyIdentifier {
         let embeddings = {
             let input_tensor = Tensor::from_array(batch_input)
                 .map_err(|e| PartyIdentifierError::InferenceFailed(format!("tensor error: {e}")))?;
-            let mut session = self.session.lock().unwrap();
+            let mut session = self.lock_session("opponent_party");
+            if self.diagnostics_enabled {
+                tracing::info!(operation = "opponent_party", "ONNX batch run started");
+            }
+            let run_started_at = Instant::now();
             let outputs = session
                 .run(ort::inputs!["pixel_values" => input_tensor])
                 .map_err(|e| PartyIdentifierError::InferenceFailed(format!("run error: {e}")))?;
+            if self.diagnostics_enabled {
+                tracing::info!(
+                    operation = "opponent_party",
+                    elapsed_ms = run_started_at.elapsed().as_millis() as u64,
+                    "ONNX batch run completed",
+                );
+            }
             outputs["embedding"]
                 .try_extract_array::<f32>()
                 .map_err(|e| PartyIdentifierError::InferenceFailed(format!("extract error: {e}")))?

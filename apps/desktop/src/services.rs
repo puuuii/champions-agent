@@ -1,6 +1,4 @@
-use crate::battle_selection::{
-    BattleSelectionInferer, BattleSelectionObservation,
-};
+use crate::battle_selection::{BattleSelectionInferer, BattleSelectionObservation};
 use champions_application::ports::{
     CatalogRepository, PartyRepository, UsageFetcher, UsageRepository, UsageSource,
 };
@@ -18,8 +16,8 @@ use champions_interface::{
     AbilityUsageView, EffortValueUsageView, ItemUsageView, MoveUsageView, NatureUsageView,
     PokemonUsageSummaryView,
 };
-use std::sync::Arc;
 use champions_runtime::PixelFormat;
+use std::sync::Arc;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
