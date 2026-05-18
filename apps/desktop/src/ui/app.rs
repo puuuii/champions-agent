@@ -34,7 +34,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::JAPANESE_FONT;
 
 const EDITOR_SLOT_ORDER: [usize; 6] = [0, 1, 2, 3, 4, 5];
-const BATTLE_SELECTION_TRACE_PATH: &str = "debug/battle_selection_trace.log";
+const BATTLE_SELECTION_TRACE_PATH: &str = "debug/logs/battle_selection_trace.log";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -977,10 +977,6 @@ impl PokeEditorApp {
             Some("inference_in_flight")
         } else if !self.services.can_infer_battle_selection() {
             Some("inferer_unavailable")
-        } else if self.battle_selection.my_confirmed.len() >= 3
-            && self.battle_selection.opponent_confirmed.len() >= 3
-        {
-            Some("all_slots_confirmed")
         } else if self
             .battle_selection
             .last_inference_timestamp_millis

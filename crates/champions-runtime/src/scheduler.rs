@@ -20,6 +20,7 @@ pub struct RecognitionScheduler {
     state_entered_at: Instant,
     consecutive_misses: u32,
     confirm_threshold: u32,
+    identification_completed_for_current_selection: bool,
 }
 
 impl RecognitionScheduler {
@@ -33,6 +34,7 @@ impl RecognitionScheduler {
             state_entered_at: Instant::now(),
             consecutive_misses: 0,
             confirm_threshold: 2,
+            identification_completed_for_current_selection: false,
         }
     }
 
@@ -58,6 +60,7 @@ impl RecognitionScheduler {
 
     pub fn should_run_identification(&self) -> bool {
         self.state == SchedulerState::SelectionScreenEntered
+            && !self.identification_completed_for_current_selection
     }
 
     pub fn on_ocr_result(&mut self, screen_state: ScreenState, now: Instant) {
@@ -67,6 +70,7 @@ impl RecognitionScheduler {
             (SchedulerState::Idle, ScreenState::SelectionScreen) => {
                 self.transition_to(SchedulerState::MaybeSelectionScreen, now);
                 self.consecutive_misses = 0;
+                self.identification_completed_for_current_selection = false;
             }
             (SchedulerState::Idle, ScreenState::Other) => {}
             (SchedulerState::MaybeSelectionScreen, ScreenState::SelectionScreen) => {
@@ -94,6 +98,7 @@ impl RecognitionScheduler {
             }
             (SchedulerState::SelectionScreenExited, ScreenState::Other) => {
                 self.transition_to(SchedulerState::Idle, now);
+                self.identification_completed_for_current_selection = false;
             }
             (SchedulerState::SelectionScreenExited, ScreenState::SelectionScreen) => {
                 self.transition_to(SchedulerState::SelectionScreenStable, now);
@@ -107,6 +112,7 @@ impl RecognitionScheduler {
         if self.state == SchedulerState::SelectionScreenEntered {
             self.transition_to(SchedulerState::SelectionScreenStable, now);
             self.consecutive_misses = 0;
+            self.identification_completed_for_current_selection = true;
         }
     }
 
@@ -114,6 +120,7 @@ impl RecognitionScheduler {
         self.last_ocr_at = Some(now);
         self.transition_to(SchedulerState::SelectionScreenEntered, now);
         self.consecutive_misses = 0;
+        self.identification_completed_for_current_selection = false;
     }
 
     pub fn reset(&mut self) {
@@ -121,6 +128,7 @@ impl RecognitionScheduler {
         self.last_ocr_at = None;
         self.consecutive_misses = 0;
         self.state_entered_at = Instant::now();
+        self.identification_completed_for_current_selection = false;
     }
 
     fn transition_to(&mut self, new_state: SchedulerState, now: Instant) {
@@ -132,5 +140,53 @@ impl RecognitionScheduler {
 impl Default for RecognitionScheduler {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RecognitionScheduler, SchedulerState};
+    use champions_domain::recognition::ScreenState;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn identification_runs_only_once_per_selection_cycle() {
+        let mut scheduler = RecognitionScheduler::new();
+        let start = Instant::now();
+
+        scheduler.on_ocr_result(ScreenState::SelectionScreen, start);
+        scheduler.on_ocr_result(
+            ScreenState::SelectionScreen,
+            start + Duration::from_millis(2500),
+        );
+
+        assert_eq!(scheduler.state(), SchedulerState::SelectionScreenEntered);
+        assert!(scheduler.should_run_identification());
+
+        scheduler.on_identification_complete(start + Duration::from_millis(2600));
+        assert_eq!(scheduler.state(), SchedulerState::SelectionScreenStable);
+        assert!(!scheduler.should_run_identification());
+
+        scheduler.on_ocr_result(
+            ScreenState::SelectionScreen,
+            start + Duration::from_millis(6000),
+        );
+        assert!(!scheduler.should_run_identification());
+
+        scheduler.on_ocr_result(ScreenState::Other, start + Duration::from_millis(9000));
+        scheduler.on_ocr_result(ScreenState::Other, start + Duration::from_millis(12000));
+        scheduler.on_ocr_result(ScreenState::Other, start + Duration::from_millis(15000));
+        assert_eq!(scheduler.state(), SchedulerState::Idle);
+
+        scheduler.on_ocr_result(
+            ScreenState::SelectionScreen,
+            start + Duration::from_millis(16000),
+        );
+        scheduler.on_ocr_result(
+            ScreenState::SelectionScreen,
+            start + Duration::from_millis(18500),
+        );
+        assert_eq!(scheduler.state(), SchedulerState::SelectionScreenEntered);
+        assert!(scheduler.should_run_identification());
     }
 }
