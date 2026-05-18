@@ -26,10 +26,15 @@ use iced::{
     widget::{button, column, container, row, scrollable, text, text_input},
 };
 use std::collections::HashMap;
+use std::fs::{OpenOptions, create_dir_all};
+use std::io::Write;
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::JAPANESE_FONT;
 
 const EDITOR_SLOT_ORDER: [usize; 6] = [0, 1, 2, 3, 4, 5];
+const BATTLE_SELECTION_TRACE_PATH: &str = "debug/battle_selection_trace.log";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -203,6 +208,16 @@ pub enum Message {
 
 impl PokeEditorApp {
     pub fn new(services: DesktopAppServices) -> (Self, Task<Message>) {
+        if services.debug_mode() {
+            append_battle_selection_trace(format!(
+                "app_started cwd={} pid={}",
+                std::env::current_dir()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|_| "<unknown>".to_string()),
+                std::process::id()
+            ));
+        }
+
         let (saved_party, editor_status) = match services.load_party() {
             Ok(party) => (party, None),
             Err(error) => {
@@ -379,6 +394,10 @@ impl PokeEditorApp {
                         current_generation = self.battle_selection_generation,
                         "battle selection inference completion received",
                     );
+                    append_battle_selection_trace(format!(
+                        "completion_received generation={} current_generation={}",
+                        generation, self.battle_selection_generation
+                    ));
                 }
 
                 if generation != self.battle_selection_generation {
@@ -388,6 +407,10 @@ impl PokeEditorApp {
                             current_generation = self.battle_selection_generation,
                             "battle selection inference completion ignored due to generation mismatch",
                         );
+                        append_battle_selection_trace(format!(
+                            "completion_ignored_generation_mismatch generation={} current_generation={}",
+                            generation, self.battle_selection_generation
+                        ));
                     }
                     return Task::none();
                 }
@@ -395,25 +418,43 @@ impl PokeEditorApp {
                 self.battle_selection.inference_in_flight = false;
                 match result {
                     Ok(observation) => {
+                        let my_pokemon = observation
+                            .my_pokemon
+                            .as_ref()
+                            .map(|candidate| candidate.name.as_str())
+                            .unwrap_or("-");
+                        let opponent_pokemon = observation
+                            .opponent_pokemon
+                            .as_ref()
+                            .map(|candidate| candidate.name.as_str())
+                            .unwrap_or("-");
                         if self.services.debug_mode() {
                             tracing::info!(
-                                my_pokemon = observation
-                                    .my_pokemon
-                                    .as_ref()
-                                    .map(|candidate| candidate.name.as_str()),
-                                opponent_pokemon = observation
-                                    .opponent_pokemon
-                                    .as_ref()
-                                    .map(|candidate| candidate.name.as_str()),
+                                my_pokemon,
+                                opponent_pokemon,
                                 my_confirmed = self.battle_selection.my_confirmed.len(),
                                 opponent_confirmed = self.battle_selection.opponent_confirmed.len(),
                                 "battle selection inference completed successfully",
                             );
+                            append_battle_selection_trace(format!(
+                                "completion_success generation={} my_pokemon={} opponent_pokemon={} my_confirmed={} opponent_confirmed={}",
+                                generation,
+                                my_pokemon,
+                                opponent_pokemon,
+                                self.battle_selection.my_confirmed.len(),
+                                self.battle_selection.opponent_confirmed.len()
+                            ));
                         }
                         self.battle_selection.register_observation(observation);
                     }
                     Err(error) => {
                         tracing::warn!(%error, "battle selection inference failed");
+                        if self.services.debug_mode() {
+                            append_battle_selection_trace(format!(
+                                "completion_error generation={} error={}",
+                                generation, error
+                            ));
+                        }
                     }
                 }
             }
@@ -968,6 +1009,17 @@ impl PokeEditorApp {
                     frame_timestamp_millis = frame.timestamp_millis,
                     "battle selection inference skipped",
                 );
+                append_battle_selection_trace(format!(
+                    "skipped reason={} active_tab={:?} match_phase={:?} inference_in_flight={} my_confirmed={} opponent_confirmed={} last_inference_timestamp_millis={:?} frame_timestamp_millis={}",
+                    reason,
+                    self.active_tab,
+                    self.match_phase,
+                    self.battle_selection.inference_in_flight,
+                    self.battle_selection.my_confirmed.len(),
+                    self.battle_selection.opponent_confirmed.len(),
+                    self.battle_selection.last_inference_timestamp_millis,
+                    frame.timestamp_millis
+                ));
             }
             self.battle_selection.last_skip_reason = Some(reason);
             return Task::none();
@@ -984,6 +1036,11 @@ impl PokeEditorApp {
                     opponent_candidates = opponent_candidates.len(),
                     "battle selection inference skipped",
                 );
+                append_battle_selection_trace(format!(
+                    "skipped reason=no_candidates my_candidates={} opponent_candidates={}",
+                    my_candidates.len(),
+                    opponent_candidates.len()
+                ));
             }
             self.battle_selection.last_skip_reason = Some("no_candidates");
             return Task::none();
@@ -1009,6 +1066,14 @@ impl PokeEditorApp {
                 opponent_candidates = opponent_candidates.len(),
                 "battle selection inference requested",
             );
+            append_battle_selection_trace(format!(
+                "requested generation={} frame_sequence={} frame_timestamp_millis={} my_candidates={} opponent_candidates={}",
+                generation,
+                frame.frame_sequence.0,
+                frame.timestamp_millis,
+                my_candidates.len(),
+                opponent_candidates.len()
+            ));
         }
 
         Task::perform(
@@ -1799,4 +1864,22 @@ fn battle_selection_matrix_cell(content: String, is_header: bool) -> Element<'st
             ..Default::default()
         })
         .into()
+}
+
+fn append_battle_selection_trace(line: String) {
+    let timestamp_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+
+    let path = Path::new(BATTLE_SELECTION_TRACE_PATH);
+    if let Some(parent) = path.parent() {
+        let _ = create_dir_all(parent);
+    }
+
+    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
+        return;
+    };
+
+    let _ = writeln!(file, "{} {}", timestamp_millis, line);
 }
