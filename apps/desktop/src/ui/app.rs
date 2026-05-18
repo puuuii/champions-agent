@@ -98,6 +98,7 @@ struct BattleSelectionState {
     opponent_seen_counts: HashMap<String, u8>,
     inference_in_flight: bool,
     last_inference_timestamp_millis: Option<u64>,
+    last_skip_reason: Option<&'static str>,
 }
 
 impl BattleSelectionState {
@@ -372,13 +373,43 @@ impl PokeEditorApp {
                 }
             },
             Message::BattleSelectionInferenceCompleted { generation, result } => {
+                if self.services.debug_mode() {
+                    tracing::info!(
+                        generation,
+                        current_generation = self.battle_selection_generation,
+                        "battle selection inference completion received",
+                    );
+                }
+
                 if generation != self.battle_selection_generation {
+                    if self.services.debug_mode() {
+                        tracing::warn!(
+                            generation,
+                            current_generation = self.battle_selection_generation,
+                            "battle selection inference completion ignored due to generation mismatch",
+                        );
+                    }
                     return Task::none();
                 }
 
                 self.battle_selection.inference_in_flight = false;
                 match result {
                     Ok(observation) => {
+                        if self.services.debug_mode() {
+                            tracing::info!(
+                                my_pokemon = observation
+                                    .my_pokemon
+                                    .as_ref()
+                                    .map(|candidate| candidate.name.as_str()),
+                                opponent_pokemon = observation
+                                    .opponent_pokemon
+                                    .as_ref()
+                                    .map(|candidate| candidate.name.as_str()),
+                                my_confirmed = self.battle_selection.my_confirmed.len(),
+                                opponent_confirmed = self.battle_selection.opponent_confirmed.len(),
+                                "battle selection inference completed successfully",
+                            );
+                        }
                         self.battle_selection.register_observation(observation);
                     }
                     Err(error) => {
@@ -897,32 +928,68 @@ impl PokeEditorApp {
     }
 
     fn maybe_request_battle_selection_inference(&mut self, frame: &PreviewFrame) -> Task<Message> {
-        if self.active_tab != Tab::BattleSupport
-            || self.match_phase != MatchPhase::Battle
-            || self.battle_selection.inference_in_flight
-            || !self.services.can_infer_battle_selection()
-        {
-            return Task::none();
-        }
-
-        if self.battle_selection.my_confirmed.len() >= 3
+        let skip_reason = if self.active_tab != Tab::BattleSupport {
+            Some("inactive_tab")
+        } else if self.match_phase != MatchPhase::Battle {
+            Some("non_battle_phase")
+        } else if self.battle_selection.inference_in_flight {
+            Some("inference_in_flight")
+        } else if !self.services.can_infer_battle_selection() {
+            Some("inferer_unavailable")
+        } else if self.battle_selection.my_confirmed.len() >= 3
             && self.battle_selection.opponent_confirmed.len() >= 3
         {
-            return Task::none();
-        }
+            Some("all_slots_confirmed")
+        } else if self
+            .battle_selection
+            .last_inference_timestamp_millis
+            .is_some_and(|last_timestamp| {
+                frame.timestamp_millis.saturating_sub(last_timestamp) < 500
+            })
+        {
+            Some("throttled")
+        } else {
+            None
+        };
 
-        if let Some(last_timestamp) = self.battle_selection.last_inference_timestamp_millis {
-            if frame.timestamp_millis.saturating_sub(last_timestamp) < 500 {
-                return Task::none();
+        if let Some(reason) = skip_reason {
+            if self.services.debug_mode() && self.battle_selection.last_skip_reason != Some(reason)
+            {
+                tracing::info!(
+                    reason,
+                    active_tab = ?self.active_tab,
+                    match_phase = ?self.match_phase,
+                    inference_in_flight = self.battle_selection.inference_in_flight,
+                    my_confirmed = self.battle_selection.my_confirmed.len(),
+                    opponent_confirmed = self.battle_selection.opponent_confirmed.len(),
+                    last_inference_timestamp_millis = self
+                        .battle_selection
+                        .last_inference_timestamp_millis,
+                    frame_timestamp_millis = frame.timestamp_millis,
+                    "battle selection inference skipped",
+                );
             }
+            self.battle_selection.last_skip_reason = Some(reason);
+            return Task::none();
         }
 
         let my_candidates = self.battle_my_candidate_names();
         let opponent_candidates = self.battle_opponent_candidate_names();
         if my_candidates.is_empty() && opponent_candidates.is_empty() {
+            if self.services.debug_mode()
+                && self.battle_selection.last_skip_reason != Some("no_candidates")
+            {
+                tracing::info!(
+                    my_candidates = my_candidates.len(),
+                    opponent_candidates = opponent_candidates.len(),
+                    "battle selection inference skipped",
+                );
+            }
+            self.battle_selection.last_skip_reason = Some("no_candidates");
             return Task::none();
         }
 
+        self.battle_selection.last_skip_reason = None;
         self.battle_selection.inference_in_flight = true;
         self.battle_selection.last_inference_timestamp_millis = Some(frame.timestamp_millis);
 
@@ -932,6 +999,17 @@ impl PokeEditorApp {
         let height = frame.height;
         let pixel_format = frame.pixel_format;
         let pixels = frame.pixels.clone();
+
+        if self.services.debug_mode() {
+            tracing::info!(
+                generation,
+                frame_sequence = frame.frame_sequence.0,
+                frame_timestamp_millis = frame.timestamp_millis,
+                my_candidates = my_candidates.len(),
+                opponent_candidates = opponent_candidates.len(),
+                "battle selection inference requested",
+            );
+        }
 
         Task::perform(
             async move {

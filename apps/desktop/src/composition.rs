@@ -59,6 +59,7 @@ impl DesktopComposition {
                 repositories.usage_fetcher,
                 repositories.usage_repo,
                 battle_selection_inferer,
+                debug_mode,
             ),
         })
     }

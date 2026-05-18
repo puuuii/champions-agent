@@ -48,6 +48,7 @@ pub struct DesktopAppServices {
     usage_fetcher: Arc<dyn UsageFetcher>,
     usage_repo: Arc<dyn UsageRepository>,
     battle_selection_inferer: Option<Arc<BattleSelectionInferer>>,
+    debug_mode: bool,
 }
 
 impl DesktopAppServices {
@@ -57,6 +58,7 @@ impl DesktopAppServices {
         usage_fetcher: Arc<dyn UsageFetcher>,
         usage_repo: Arc<dyn UsageRepository>,
         battle_selection_inferer: Option<Arc<BattleSelectionInferer>>,
+        debug_mode: bool,
     ) -> Self {
         Self {
             catalog_repo,
@@ -64,7 +66,12 @@ impl DesktopAppServices {
             usage_fetcher,
             usage_repo,
             battle_selection_inferer,
+            debug_mode,
         }
+    }
+
+    pub fn debug_mode(&self) -> bool {
+        self.debug_mode
     }
 
     pub fn load_party(&self) -> Result<SavedParty, String> {
