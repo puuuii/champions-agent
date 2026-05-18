@@ -1605,19 +1605,21 @@ impl PokeEditorApp {
             }
         };
 
-        container(
-            column![
-                header_row,
-                phase_controls,
-                content,
-                battle_selection_matrix_view(&self.battle_selection)
-            ]
-            .spacing(20),
-        )
-        .padding(20)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        let battle_selection_panel = column![
+            text("選出ポケモン対応表").font(JAPANESE_FONT).size(20),
+            text(battle_selection_status_text(&self.battle_selection))
+                .font(JAPANESE_FONT)
+                .size(14)
+                .color(Color::from_rgb(0.35, 0.35, 0.35)),
+            battle_selection_matrix_view(&self.battle_selection)
+        ]
+        .spacing(8);
+
+        container(column![header_row, phase_controls, battle_selection_panel, content].spacing(20))
+            .padding(20)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 }
 
@@ -1823,20 +1825,37 @@ fn battle_selection_matrix_view(state: &BattleSelectionState) -> Element<'_, Mes
     ]
     .spacing(8);
 
-    container(
-        column![
-            text("選出ポケモン対応表").font(JAPANESE_FONT).size(20),
-            header_row,
-            row1,
-            row2,
-            row3,
-        ]
-        .spacing(8),
-    )
-    .padding(8)
-    .width(Length::Fill)
-    .height(Length::Fixed(MATRIX_HEIGHT))
-    .into()
+    container(column![header_row, row1, row2, row3,].spacing(8))
+        .padding(8)
+        .width(Length::Fill)
+        .height(Length::Fixed(MATRIX_HEIGHT))
+        .into()
+}
+
+fn battle_selection_status_text(state: &BattleSelectionState) -> String {
+    let confirmed_summary = format!(
+        "自分 {}/3, 相手 {}/3",
+        state.my_confirmed.len(),
+        state.opponent_confirmed.len()
+    );
+
+    let suffix = match state.last_skip_reason {
+        Some("inactive_tab") => Some("対戦サポート画面が非アクティブです"),
+        Some("non_battle_phase") => Some("バトルフェーズ待機中です"),
+        Some("inference_in_flight") => Some("推論実行中です"),
+        Some("inferer_unavailable") => Some("推論器を初期化できていません"),
+        Some("throttled") => Some("500ms 間隔で更新中です"),
+        Some("no_candidates") => Some("候補ポケモン名の確定待ちです"),
+        Some(_) | None if state.my_confirmed.is_empty() && state.opponent_confirmed.is_empty() => {
+            Some("推論結果待ちです")
+        }
+        Some(_) | None => None,
+    };
+
+    match suffix {
+        Some(suffix) => format!("{confirmed_summary} | {suffix}"),
+        None => confirmed_summary,
+    }
 }
 
 fn battle_selection_matrix_cell(content: String, is_header: bool) -> Element<'static, Message> {

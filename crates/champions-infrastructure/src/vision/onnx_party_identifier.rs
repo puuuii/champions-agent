@@ -264,10 +264,28 @@ impl OnnxPartyIdentifier {
         candidate_names: &[String],
         config: &RecognitionConfig,
     ) -> Result<Option<RecognizedPokemon>, PartyIdentifierError> {
+        let mut unresolved_candidates = Vec::new();
         let candidate_indices = candidate_names
             .iter()
-            .filter_map(|candidate_name| self.resolve_candidate_index(candidate_name))
+            .filter_map(
+                |candidate_name| match self.resolve_candidate_index(candidate_name) {
+                    Some(index) => Some(index),
+                    None => {
+                        unresolved_candidates.push(candidate_name.clone());
+                        None
+                    }
+                },
+            )
             .collect::<Vec<_>>();
+
+        if self.diagnostics_enabled && !unresolved_candidates.is_empty() {
+            tracing::warn!(
+                ?unresolved_candidates,
+                candidate_count = candidate_names.len(),
+                resolved_count = candidate_indices.len(),
+                "battle selection candidates did not match any master images",
+            );
+        }
 
         if candidate_indices.is_empty() {
             return Ok(None);
@@ -311,21 +329,23 @@ impl OnnxPartyIdentifier {
     }
 
     fn resolve_candidate_index(&self, candidate_name: &str) -> Option<usize> {
-        self.master_names
-            .iter()
-            .position(|name| name == candidate_name)
-            .or_else(|| {
-                let normalized_candidate = normalize_species_name(candidate_name);
-                self.master_names
-                    .iter()
-                    .position(|name| normalize_species_name(name) == normalized_candidate)
-            })
+        let normalized_candidate = normalize_species_name(candidate_name);
+
+        self.master_names.iter().position(|name| {
+            name == candidate_name || normalize_species_name(name) == normalized_candidate
+        })
     }
 }
 
 fn normalize_species_name(name: &str) -> String {
     name.chars()
         .filter(|c| !c.is_whitespace())
+        .map(|c| match c {
+            'X' | 'x' => 'Ｘ',
+            'Y' | 'y' => 'Ｙ',
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            _ => c,
+        })
         .collect::<String>()
 }
 
@@ -452,4 +472,29 @@ fn preprocess_single(img: &DynamicImage) -> Array3<f32> {
 fn l2_normalize(v: Array1<f32>) -> Array1<f32> {
     let norm = v.dot(&v).sqrt().max(1e-12);
     v / norm
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_species_name;
+
+    #[test]
+    fn normalize_species_name_ignores_whitespace_and_xy_width() {
+        assert_eq!(
+            normalize_species_name(" メガリザードンX "),
+            normalize_species_name("メガリザードンＸ")
+        );
+        assert_eq!(
+            normalize_species_name("メガリザードン y"),
+            normalize_species_name("メガリザードンＹ")
+        );
+    }
+
+    #[test]
+    fn normalize_species_name_matches_sanitized_master_filenames() {
+        assert_eq!(
+            normalize_species_name("A/B:C*D?E\"F<G>H|I"),
+            "A_B_C_D_E_F_G_H_I"
+        );
+    }
 }
